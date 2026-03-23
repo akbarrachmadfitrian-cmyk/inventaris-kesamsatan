@@ -378,11 +378,15 @@ function App() {
     <div className="min-h-screen bg-[#F8FAFC] text-[#1E293B] font-sans flex overflow-hidden">
       {/* Sidebar */}
       <aside className="w-72 bg-white border-r border-slate-200 flex flex-col z-40 shrink-0">
-        <div className="p-6 flex items-center gap-3 border-b border-slate-50">
-          <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center text-blue-600">
-            <Building2 className="w-6 h-6" />
+        <div className="p-6 flex flex-col items-center gap-3 border-b border-slate-50">
+          <div className="w-12 h-12 bg-slate-100 rounded-2xl flex items-center justify-center text-blue-600">
+            <img
+              src="/bapenda-kalsel.svg"
+              alt="Bapenda Kalimantan Selatan"
+              className="w-10 h-10 object-contain"
+            />
           </div>
-          <div>
+          <div className="text-center">
             <h1 className="text-sm font-bold text-slate-900 leading-tight">Inventaris Kesamsatan</h1>
             <p className="text-[10px] text-slate-500 font-medium">BAPENDA PROV KALSEL</p>
           </div>
