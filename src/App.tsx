@@ -40,6 +40,63 @@ interface Stats {
   tidakLengkapTidakBaik: number;
 }
 
+const normalizeFilled = (value: string) => {
+  const v = value.trim();
+  if (!v) return false;
+  if (/^\?+$/.test(v)) return false;
+  if (v === '-') return false;
+  if (v.toLowerCase() === 'n/a') return false;
+  return true;
+};
+
+const normalizeCondition = (raw: string) => {
+  const v = (raw || '').trim();
+  if (!v) return 'Kurang Baik';
+  const u = v.toUpperCase();
+  if (u.includes('RUSAK') || u.includes('MATI') || u.includes('ERROR') || u.includes('TIDAK BAIK')) return 'Rusak';
+  if (u.includes('KURANG')) return 'Kurang Baik';
+  if (u.includes('BAIK')) return 'Baik';
+  return 'Kurang Baik';
+};
+
+const getConditionPillClass = (condition: string) => {
+  const c = normalizeCondition(condition);
+  if (c === 'Baik') return 'bg-emerald-50 text-emerald-600';
+  if (c === 'Kurang Baik') return 'bg-amber-50 text-amber-700';
+  return 'bg-rose-50 text-rose-600';
+};
+
+const parseCsvLine = (line: string, separator: string) => {
+  const cells: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i++;
+        continue;
+      }
+      inQuotes = !inQuotes;
+      continue;
+    }
+
+    if (!inQuotes && ch === separator) {
+      cells.push(current.trim());
+      current = '';
+      continue;
+    }
+
+    current += ch;
+  }
+
+  cells.push(current.trim());
+  return cells;
+};
+
 const parseSheetCSV = (csvData: string, defaultSamsat: string): Device[] => {
   const lines = csvData.split(/\r?\n/).filter(line => line.trim());
   if (lines.length === 0) return [];
@@ -51,7 +108,7 @@ const parseSheetCSV = (csvData: string, defaultSamsat: string): Device[] => {
   const sheetDevices: Device[] = [];
 
   lines.forEach((line, index) => {
-    const cells = line.split(separator).map(cell => cell.replace(/^"|"$/g, '').trim());
+    const cells = parseCsvLine(line, separator);
 
     if (cells.length < 2) {
       if (cells[0].toUpperCase().includes('SAMSAT')) {
@@ -80,30 +137,27 @@ const parseSheetCSV = (csvData: string, defaultSamsat: string): Device[] => {
       let finalServiceUnit = cells[4] || "Umum";
       const serialNumberRaw = (cells[3] || '').trim();
       const phoneNumberRaw = (cells[8] || '').trim();
-      const normalizeFilled = (value: string) => {
-        const v = value.trim();
-        if (!v) return false;
-        if (/^\?+$/.test(v)) return false;
-        if (v === '-') return false;
-        if (v.toLowerCase() === 'n/a') return false;
-        return true;
-      };
       const dataComplete = normalizeFilled(serialNumberRaw) && normalizeFilled(phoneNumberRaw);
+      const conditionNormalized = normalizeCondition(cells[5] || '');
 
       if (currentSamsat.toUpperCase().includes("HANDIL BAKTI")) {
         finalSamsat = "SAMSAT MARABAHAN";
         finalServiceUnit = "SAMSAT BANTU HANDIL BAKTI";
       }
 
+      const rowNo = (cells[0] || '').trim();
+      const fallbackId = rowNo ? `${defaultSamsat}-${rowNo}` : `dev-${defaultSamsat}-${index}`;
+      const deviceId = normalizeFilled(serialNumberRaw) ? serialNumberRaw : fallbackId;
+
       sheetDevices.push({
-        id: cells[3] || `dev-${defaultSamsat}-${index}`,
+        id: deviceId,
         name: cells[1] || "Perangkat Tanpa Nama",
-        category: cells[2] || "Aset",
+        category: (cells[1] || '').split(' ')[0] || "Aset",
         location: currentSamsat,
         subLocation: cells[6] || "Staff",
         serialNumber: serialNumberRaw || "N/A",
         phoneNumber: phoneNumberRaw,
-        condition: cells[5] || "Baik",
+        condition: conditionNormalized,
         isComplete: false,
         dataComplete,
         samsat: finalSamsat,
@@ -328,16 +382,16 @@ function App() {
 
   const stats: Stats = useMemo(() => {
     const total = currentSamsatDevices.length;
-    const baik = currentSamsatDevices.filter(d => d.condition === 'Baik').length;
-    const kurangBaik = currentSamsatDevices.filter(d => d.condition === 'Kurang Baik').length;
-    const rusak = currentSamsatDevices.filter(d => d.condition.toLowerCase().includes('rusak')).length;
+    const baik = currentSamsatDevices.filter(d => normalizeCondition(d.condition) === 'Baik').length;
+    const kurangBaik = currentSamsatDevices.filter(d => normalizeCondition(d.condition) === 'Kurang Baik').length;
+    const rusak = currentSamsatDevices.filter(d => normalizeCondition(d.condition) === 'Rusak').length;
     const layanan = new Set(currentSamsatDevices.map(d => d.serviceUnit)).size;
 
     const lengkapTotal = currentSamsatDevices.filter(d => d.dataComplete).length;
     const tidakLengkapTotal = total - lengkapTotal;
 
-    const lengkapBaik = currentSamsatDevices.filter(d => d.dataComplete && d.condition === 'Baik').length;
-    const tidakLengkapBaik = currentSamsatDevices.filter(d => !d.dataComplete && d.condition === 'Baik').length;
+    const lengkapBaik = currentSamsatDevices.filter(d => d.dataComplete && normalizeCondition(d.condition) === 'Baik').length;
+    const tidakLengkapBaik = currentSamsatDevices.filter(d => !d.dataComplete && normalizeCondition(d.condition) === 'Baik').length;
 
     const lengkapTidakBaik = lengkapTotal - lengkapBaik;
     const tidakLengkapTidakBaik = tidakLengkapTotal - tidakLengkapBaik;
@@ -358,7 +412,7 @@ function App() {
   }, [currentSamsatDevices]);
 
   const attentionDevices = useMemo(() => 
-    currentSamsatDevices.filter(d => d.condition !== 'Baik').slice(0, 5),
+    currentSamsatDevices.filter(d => normalizeCondition(d.condition) !== 'Baik').slice(0, 5),
   [currentSamsatDevices]);
 
   const filteredDevices = useMemo(() => {
@@ -559,9 +613,9 @@ function App() {
                           <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">{d.serviceUnit} • {d.subLocation}</p>
                         </div>
                         <span className={`text-[10px] font-black px-3 py-1.5 rounded-lg uppercase tracking-widest ${
-                          d.condition.includes('Rusak') ? 'bg-rose-100 text-rose-600' : 'bg-amber-100 text-amber-600'
+                          normalizeCondition(d.condition) === 'Rusak' ? 'bg-rose-100 text-rose-600' : 'bg-amber-100 text-amber-700'
                         }`}>
-                          {d.condition}
+                          {normalizeCondition(d.condition)}
                         </span>
                       </div>
                     ))}
@@ -675,10 +729,8 @@ function App() {
                     <h4 className="font-black text-slate-900 mb-1">{d.name}</h4>
                     <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest mb-4">{d.serviceUnit} • {d.subLocation}</p>
                     <div className="flex items-center justify-between pt-4 border-t border-slate-50">
-                      <span className={`text-[10px] font-black px-2 py-1 rounded-md ${
-                        d.condition === 'Baik' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
-                      }`}>
-                        {d.condition}
+                      <span className={`text-[10px] font-black px-2 py-1 rounded-md ${getConditionPillClass(d.condition)}`}>
+                        {normalizeCondition(d.condition)}
                       </span>
                       {d.isComplete && <QrCode className="w-4 h-4 text-blue-500" />}
                     </div>
@@ -821,7 +873,12 @@ function App() {
                         <div><p className="text-slate-400 uppercase text-[10px] tracking-widest mb-1">No HP User</p><p className="text-slate-900">{selectedDevice.phoneNumber || '-'}</p></div>
                         <div><p className="text-slate-400 uppercase text-[10px] tracking-widest mb-1">Pemegang</p><p className="text-slate-900">{selectedDevice.subLocation || '-'}</p></div>
                         <div><p className="text-slate-400 uppercase text-[10px] tracking-widest mb-1">Samsat</p><p className="text-slate-900">{selectedDevice.samsat}</p></div>
-                        <div><p className="text-slate-400 uppercase text-[10px] tracking-widest mb-1">Kondisi</p><p className={selectedDevice.condition === 'Baik' ? 'text-emerald-600' : 'text-rose-600'}>{selectedDevice.condition}</p></div>
+                        <div>
+                          <p className="text-slate-400 uppercase text-[10px] tracking-widest mb-1">Kondisi</p>
+                          <p className={normalizeCondition(selectedDevice.condition) === 'Baik' ? 'text-emerald-600' : normalizeCondition(selectedDevice.condition) === 'Kurang Baik' ? 'text-amber-700' : 'text-rose-600'}>
+                            {normalizeCondition(selectedDevice.condition)}
+                          </p>
+                        </div>
                       </div>
                       {selectedDevice.isComplete ? (
                         <div className="bg-slate-50 p-8 rounded-[2.5rem] flex flex-col items-center border border-slate-100">
