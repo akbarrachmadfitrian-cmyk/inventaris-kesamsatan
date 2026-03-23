@@ -5,7 +5,8 @@ import {
   Camera, Upload, CheckCircle2, QrCode, Search, RefreshCw,
   Monitor, Printer, LayoutDashboard, ChevronRight,
   Building2, Layers, XCircle, AlertTriangle,
-  ChevronDown, List, MoreVertical
+  Trash2, Plus, FileUp, Clock3,
+  ChevronDown, List
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -39,6 +40,66 @@ interface Stats {
   tidakLengkapBaik: number;
   tidakLengkapTidakBaik: number;
 }
+
+type StockStatus = 'ready' | 'empty' | 'standby';
+type ApprovalStatus = 'approved' | 'rejected' | 'pending';
+
+interface DeviceRequestLetter {
+  fileName: string;
+  mimeType: string;
+  dataUrl: string;
+  uploadedAt: string;
+}
+
+interface DeviceRequest {
+  samsat: string;
+  requestedCount: number;
+  letter: DeviceRequestLetter | null;
+  stockStatus: StockStatus;
+  kabid: { status: ApprovalStatus; approvedCount: number | null };
+  sekban: { status: ApprovalStatus; approvedCount: number | null };
+  addedDeviceIds: string[];
+  finalizedAt: string | null;
+}
+
+const LS_DELETED_DEVICE_IDS = 'samsat_deleted_device_ids';
+const LS_ADDED_DEVICES = 'samsat_added_devices';
+const LS_DEVICE_REQUESTS = 'samsat_device_requests';
+
+const safeParseJSON = <T,>(raw: string | null, fallback: T): T => {
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+};
+
+const loadDeletedDeviceIds = () => safeParseJSON<string[]>(localStorage.getItem(LS_DELETED_DEVICE_IDS), []);
+const saveDeletedDeviceIds = (ids: string[]) => localStorage.setItem(LS_DELETED_DEVICE_IDS, JSON.stringify(ids));
+
+const loadAddedDevices = () => safeParseJSON<Device[]>(localStorage.getItem(LS_ADDED_DEVICES), []);
+const saveAddedDevices = (devices: Device[]) => localStorage.setItem(LS_ADDED_DEVICES, JSON.stringify(devices));
+
+const loadDeviceRequests = () => safeParseJSON<Record<string, DeviceRequest>>(localStorage.getItem(LS_DEVICE_REQUESTS), {});
+const saveDeviceRequests = (requests: Record<string, DeviceRequest>) => localStorage.setItem(LS_DEVICE_REQUESTS, JSON.stringify(requests));
+
+const createDefaultRequest = (samsat: string): DeviceRequest => ({
+  samsat,
+  requestedCount: 0,
+  letter: null,
+  stockStatus: 'standby',
+  kabid: { status: 'pending', approvedCount: null },
+  sekban: { status: 'pending', approvedCount: null },
+  addedDeviceIds: [],
+  finalizedAt: null
+});
+
+const getStatusBadge = (status: 'ok' | 'no' | 'pending') => {
+  if (status === 'ok') return { icon: <CheckCircle2 className="w-4 h-4" />, className: 'bg-emerald-50 text-emerald-700 border-emerald-100', text: 'OK' };
+  if (status === 'no') return { icon: <XCircle className="w-4 h-4" />, className: 'bg-rose-50 text-rose-700 border-rose-100', text: 'TIDAK' };
+  return { icon: <Clock3 className="w-4 h-4" />, className: 'bg-amber-50 text-amber-800 border-amber-100', text: 'DALAM PROSES' };
+};
 
 const normalizeFilled = (value: string) => {
   const v = value.trim();
@@ -217,6 +278,153 @@ function App() {
   const [viewMode, setViewMode] = useState<'selection' | 'dashboard' | 'devices'>('selection');
   const [activeSamsat, setActiveSamsat] = useState<string | null>(null);
   const [showSamsatDropdown, setShowSamsatDropdown] = useState(false);
+  const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
+  const [requestDraft, setRequestDraft] = useState<DeviceRequest | null>(null);
+  const [newDeviceDraft, setNewDeviceDraft] = useState<Partial<Device>>({
+    condition: 'Baik'
+  });
+
+  const openRequestModal = () => {
+    if (!activeSamsat) return;
+    const requests = loadDeviceRequests();
+    const req = requests[activeSamsat] || createDefaultRequest(activeSamsat);
+    setRequestDraft(req);
+    setNewDeviceDraft({ condition: 'Baik', samsat: activeSamsat });
+    setIsRequestModalOpen(true);
+  };
+
+  const persistRequestDraft = (next: DeviceRequest) => {
+    const requests = loadDeviceRequests();
+    requests[next.samsat] = next;
+    saveDeviceRequests(requests);
+    setRequestDraft(next);
+  };
+
+  const deleteDevice = (device: Device) => {
+    const ok = window.confirm(`Hapus perangkat "${device.name}"?`);
+    if (!ok) return;
+
+    setSelectedDevice(prev => (prev?.id === device.id ? null : prev));
+    setDevices(prev => prev.filter(d => d.id !== device.id));
+
+    const deleted = new Set(loadDeletedDeviceIds());
+    deleted.add(device.id);
+    saveDeletedDeviceIds(Array.from(deleted));
+
+    const photos = safeParseJSON<Record<string, string>>(localStorage.getItem('samsat_device_photos'), {});
+    if (photos[device.id]) {
+      delete photos[device.id];
+      localStorage.setItem('samsat_device_photos', JSON.stringify(photos));
+    }
+
+    const updated = safeParseJSON<Record<string, Partial<Device>>>(localStorage.getItem('samsat_updated_devices'), {});
+    if (updated[device.id]) {
+      delete updated[device.id];
+      localStorage.setItem('samsat_updated_devices', JSON.stringify(updated));
+    }
+
+    const added = loadAddedDevices().filter(d => d.id !== device.id);
+    saveAddedDevices(added);
+
+    const requests = loadDeviceRequests();
+    Object.keys(requests).forEach(key => {
+      const r = requests[key];
+      if (r.addedDeviceIds.includes(device.id)) {
+        requests[key] = { ...r, addedDeviceIds: r.addedDeviceIds.filter(id => id !== device.id) };
+      }
+    });
+    saveDeviceRequests(requests);
+  };
+
+  const getApprovedCount = (req: DeviceRequest) => {
+    if (req.stockStatus !== 'ready') return 0;
+    if (req.kabid.status !== 'approved') return 0;
+    if (req.sekban.status !== 'approved') return 0;
+    const kabidCount = Math.max(0, Number(req.kabid.approvedCount || 0));
+    const sekbanCount = Math.max(0, Number(req.sekban.approvedCount || 0));
+    const requested = Math.max(0, Number(req.requestedCount || 0));
+    return Math.min(kabidCount, sekbanCount, requested);
+  };
+
+  const addRequestedDevice = () => {
+    if (!requestDraft || !activeSamsat) return;
+    const approvedCount = getApprovedCount(requestDraft);
+    const remaining = approvedCount - requestDraft.addedDeviceIds.length;
+    if (remaining <= 0) return;
+
+    const name = String(newDeviceDraft.name || '').trim();
+    const serviceUnit = String(newDeviceDraft.serviceUnit || '').trim();
+    const subLocation = String(newDeviceDraft.subLocation || '').trim();
+    const serialNumber = String(newDeviceDraft.serialNumber || '').trim();
+    const phoneNumber = String(newDeviceDraft.phoneNumber || '').trim();
+    const condition = normalizeCondition(String(newDeviceDraft.condition || 'Baik'));
+
+    if (!name || !serviceUnit) return;
+
+    const rowId = (() => {
+      if (normalizeFilled(serialNumber)) return serialNumber;
+      if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `ADD-${(crypto as Crypto).randomUUID()}`;
+      return `ADD-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    })();
+
+    const device: Device = {
+      id: rowId,
+      name,
+      category: name.split(' ')[0] || 'Aset',
+      location: activeSamsat,
+      subLocation: subLocation || 'Staff',
+      serialNumber: serialNumber || 'N/A',
+      phoneNumber,
+      condition,
+      isComplete: false,
+      dataComplete: normalizeFilled(serialNumber) && normalizeFilled(phoneNumber),
+      samsat: activeSamsat,
+      serviceUnit,
+      sheetName: 'Manual'
+    };
+
+    const added = loadAddedDevices();
+    const deleted = new Set(loadDeletedDeviceIds());
+    deleted.delete(device.id);
+    saveDeletedDeviceIds(Array.from(deleted));
+    saveAddedDevices([device, ...added]);
+    setDevices(prev => [device, ...prev]);
+
+    const nextReq: DeviceRequest = { ...requestDraft, addedDeviceIds: [...requestDraft.addedDeviceIds, device.id] };
+    const nextRemaining = approvedCount - nextReq.addedDeviceIds.length;
+    const finalized = nextRemaining <= 0 ? new Date().toISOString() : null;
+    persistRequestDraft({ ...nextReq, finalizedAt: finalized || nextReq.finalizedAt });
+
+    setNewDeviceDraft(prev => ({
+      ...prev,
+      name: '',
+      serialNumber: '',
+      phoneNumber: '',
+      subLocation: '',
+      condition: 'Baik'
+    }));
+  };
+
+  const handleLetterUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!requestDraft) return;
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const dataUrl = String(reader.result || '');
+      const next: DeviceRequest = {
+        ...requestDraft,
+        letter: {
+          fileName: file.name,
+          mimeType: file.type || 'application/octet-stream',
+          dataUrl,
+          uploadedAt: new Date().toISOString()
+        }
+      };
+      persistRequestDraft(next);
+    };
+    reader.readAsDataURL(file);
+  };
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -275,6 +483,8 @@ function App() {
       if (allFetchedDevices.length > 0) {
         const savedPhotos = JSON.parse(localStorage.getItem('samsat_device_photos') || '{}');
         const updatedDevices = JSON.parse(localStorage.getItem('samsat_updated_devices') || '{}');
+        const deletedIds = new Set(loadDeletedDeviceIds());
+        const addedDevices = loadAddedDevices().filter(d => d && d.id && !deletedIds.has(d.id));
         
         const finalDevices = allFetchedDevices.map(d => {
           // Terapkan update dari local storage jika ada
@@ -286,8 +496,10 @@ function App() {
             photo: savedPhotos[d.id] || baseDevice.photo,
             isComplete: !!(savedPhotos[d.id] || baseDevice.photo)
           };
-        });
-        setDevices(finalDevices);
+        }).filter(d => !deletedIds.has(d.id));
+
+        const merged = [...addedDevices, ...finalDevices];
+        setDevices(merged);
       }
       
     } catch (err) {
@@ -518,6 +730,13 @@ function App() {
                 <Monitor className="w-5 h-5" />
                 <span>Daftar Perangkat</span>
               </button>
+              <button
+                onClick={openRequestModal}
+                className="w-full flex items-center gap-3 p-3 rounded-xl font-bold text-sm transition-all text-slate-500 hover:bg-slate-50"
+              >
+                <Plus className="w-5 h-5" />
+                <span>Tambah Perangkat</span>
+              </button>
             </>
           )}
         </nav>
@@ -708,6 +927,15 @@ function App() {
                     className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-medium text-sm transition-all"
                   />
                 </div>
+                {activeSamsat && (
+                  <button
+                    onClick={openRequestModal}
+                    className="px-5 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black transition-all shadow-lg shadow-blue-200 flex items-center gap-2"
+                  >
+                    <Plus className="w-5 h-5" />
+                    Tambah Perangkat
+                  </button>
+                )}
                 <button onClick={fetchData} className="p-3 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 transition-colors">
                   <RefreshCw className={`w-5 h-5 text-slate-600 ${loading ? 'animate-spin' : ''}`} />
                 </button>
@@ -724,7 +952,13 @@ function App() {
                       <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-400 group-hover:text-blue-600 transition-all">
                         {d.category.toLowerCase().includes('printer') ? <Printer className="w-6 h-6" /> : <Monitor className="w-6 h-6" />}
                       </div>
-                      <MoreVertical className="w-5 h-5 text-slate-300" />
+                      <button
+                        onClick={(e) => { e.stopPropagation(); deleteDevice(d); }}
+                        className="p-2 rounded-xl hover:bg-rose-50 text-rose-600 transition-colors"
+                        aria-label="Hapus perangkat"
+                      >
+                        <Trash2 className="w-5 h-5" />
+                      </button>
                     </div>
                     <h4 className="font-black text-slate-900 mb-1">{d.name}</h4>
                     <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest mb-4">{d.serviceUnit} • {d.subLocation}</p>
@@ -898,6 +1132,344 @@ function App() {
                     </>
                   )}
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isRequestModalOpen && requestDraft && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-[3rem] w-full max-w-5xl overflow-hidden shadow-2xl relative">
+              <button onClick={() => setIsRequestModalOpen(false)} className="absolute top-8 right-8 p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl z-20">
+                <XCircle className="w-6 h-6 text-slate-400" />
+              </button>
+              <div className="p-10">
+                <div className="mb-8">
+                  <h3 className="text-2xl font-black text-slate-900">Tambah Perangkat — {requestDraft.samsat}</h3>
+                  <p className="text-sm text-slate-500 font-medium mt-1">Kelola alur permintaan, koreksi stok, disposisi, dan input perangkat.</p>
+                </div>
+
+                {(() => {
+                  const suratOk = !!requestDraft.letter && requestDraft.requestedCount > 0;
+                  const stockOk = requestDraft.stockStatus === 'ready';
+                  const stockNo = requestDraft.stockStatus === 'empty';
+                  const stockBadge = getStatusBadge(stockOk ? 'ok' : stockNo ? 'no' : 'pending');
+
+                  const kabidBadge = getStatusBadge(requestDraft.kabid.status === 'approved' ? 'ok' : requestDraft.kabid.status === 'rejected' ? 'no' : 'pending');
+                  const sekbanBadge = getStatusBadge(requestDraft.sekban.status === 'approved' ? 'ok' : requestDraft.sekban.status === 'rejected' ? 'no' : 'pending');
+
+                  const approvedCount = getApprovedCount(requestDraft);
+                  const remaining = approvedCount - requestDraft.addedDeviceIds.length;
+                  const canInput = suratOk && approvedCount > 0;
+
+                  return (
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                      <div className="space-y-6">
+                        <div className="border border-slate-100 rounded-3xl p-6">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Surat Permintaan</p>
+                              <p className="text-sm font-black text-slate-900 mt-1">Upload surat dan jumlah perangkat</p>
+                            </div>
+                            <div className={`px-3 py-1.5 rounded-xl border text-[11px] font-black flex items-center gap-2 ${getStatusBadge(suratOk ? 'ok' : 'pending').className}`}>
+                              {getStatusBadge(suratOk ? 'ok' : 'pending').icon}
+                              {getStatusBadge(suratOk ? 'ok' : 'pending').text}
+                            </div>
+                          </div>
+
+                          <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4">
+                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Upload Surat</p>
+                              <label className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 flex items-center justify-center gap-2 font-bold text-sm text-slate-700 hover:bg-slate-50 cursor-pointer">
+                                <FileUp className="w-5 h-5 text-slate-500" />
+                                <span>{requestDraft.letter ? 'Ganti Surat' : 'Pilih Surat'}</span>
+                                <input type="file" className="hidden" accept="image/*,application/pdf" onChange={handleLetterUpload} />
+                              </label>
+                              {requestDraft.letter && (
+                                <div className="mt-3 flex items-center justify-between gap-3">
+                                  <p className="text-xs font-bold text-slate-600 truncate">{requestDraft.letter.fileName}</p>
+                                  <button
+                                    onClick={() => window.open(requestDraft.letter?.dataUrl || '', '_blank')}
+                                    className="text-xs font-black text-blue-600 hover:text-blue-700"
+                                  >
+                                    Lihat
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                            <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4">
+                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Jumlah Diminta</p>
+                              <input
+                                type="number"
+                                min={0}
+                                value={requestDraft.requestedCount}
+                                onChange={(e) => persistRequestDraft({ ...requestDraft, requestedCount: Math.max(0, Number(e.target.value || 0)) })}
+                                className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                              />
+                              {suratOk && (
+                                <div className="mt-3 text-[11px] font-black text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-2xl px-4 py-3">
+                                  SURAT SUDAH MASUK DALAM PROSES DISPOSISI
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="border border-slate-100 rounded-3xl p-6">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Koreksi Stok</p>
+                              <p className="text-sm font-black text-slate-900 mt-1">Cek ketersediaan stok</p>
+                            </div>
+                            <div className={`px-3 py-1.5 rounded-xl border text-[11px] font-black flex items-center gap-2 ${stockBadge.className}`}>
+                              {stockBadge.icon}
+                              {stockBadge.text}
+                            </div>
+                          </div>
+                          <div className="mt-5">
+                            <select
+                              value={requestDraft.stockStatus}
+                              onChange={(e) => persistRequestDraft({ ...requestDraft, stockStatus: e.target.value as StockStatus })}
+                              className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-black text-slate-900"
+                            >
+                              <option value="standby">Stand By (DALAM PROSES)</option>
+                              <option value="ready">Stok Ready</option>
+                              <option value="empty">Kosong</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="border border-slate-100 rounded-3xl p-6">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Disposisi Kabid IPSIPD</p>
+                              <p className="text-sm font-black text-slate-900 mt-1">Status persetujuan dan jumlah</p>
+                            </div>
+                            <div className={`px-3 py-1.5 rounded-xl border text-[11px] font-black flex items-center gap-2 ${kabidBadge.className}`}>
+                              {kabidBadge.icon}
+                              {kabidBadge.text}
+                            </div>
+                          </div>
+                          <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <select
+                              value={requestDraft.kabid.status}
+                              onChange={(e) => {
+                                const nextStatus = e.target.value as ApprovalStatus;
+                                persistRequestDraft({
+                                  ...requestDraft,
+                                  kabid: { status: nextStatus, approvedCount: nextStatus === 'approved' ? (requestDraft.kabid.approvedCount ?? requestDraft.requestedCount) : null }
+                                });
+                              }}
+                              className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-black text-slate-900"
+                            >
+                              <option value="pending">Stand By (DALAM PROSES)</option>
+                              <option value="approved">Setuju</option>
+                              <option value="rejected">Tidak Setuju</option>
+                            </select>
+                            <input
+                              type="number"
+                              min={0}
+                              disabled={requestDraft.kabid.status !== 'approved'}
+                              value={requestDraft.kabid.status === 'approved' ? Number(requestDraft.kabid.approvedCount || 0) : 0}
+                              onChange={(e) => persistRequestDraft({ ...requestDraft, kabid: { ...requestDraft.kabid, approvedCount: Math.max(0, Number(e.target.value || 0)) } })}
+                              className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-black text-slate-900 disabled:bg-slate-50 disabled:text-slate-400"
+                              placeholder="Jumlah disetujui"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="border border-slate-100 rounded-3xl p-6">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Disposisi Sekretaris Badan</p>
+                              <p className="text-sm font-black text-slate-900 mt-1">Status persetujuan dan jumlah</p>
+                            </div>
+                            <div className={`px-3 py-1.5 rounded-xl border text-[11px] font-black flex items-center gap-2 ${sekbanBadge.className}`}>
+                              {sekbanBadge.icon}
+                              {sekbanBadge.text}
+                            </div>
+                          </div>
+                          <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <select
+                              value={requestDraft.sekban.status}
+                              onChange={(e) => {
+                                const nextStatus = e.target.value as ApprovalStatus;
+                                persistRequestDraft({
+                                  ...requestDraft,
+                                  sekban: { status: nextStatus, approvedCount: nextStatus === 'approved' ? (requestDraft.sekban.approvedCount ?? requestDraft.requestedCount) : null }
+                                });
+                              }}
+                              className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-black text-slate-900"
+                            >
+                              <option value="pending">Stand By (DALAM PROSES)</option>
+                              <option value="approved">Setuju</option>
+                              <option value="rejected">Tidak Setuju</option>
+                            </select>
+                            <input
+                              type="number"
+                              min={0}
+                              disabled={requestDraft.sekban.status !== 'approved'}
+                              value={requestDraft.sekban.status === 'approved' ? Number(requestDraft.sekban.approvedCount || 0) : 0}
+                              onChange={(e) => persistRequestDraft({ ...requestDraft, sekban: { ...requestDraft.sekban, approvedCount: Math.max(0, Number(e.target.value || 0)) } })}
+                              className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-black text-slate-900 disabled:bg-slate-50 disabled:text-slate-400"
+                              placeholder="Jumlah disetujui"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-6">
+                        <div className="border border-slate-100 rounded-3xl p-6">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Input Perangkat</p>
+                              <p className="text-sm font-black text-slate-900 mt-1">Masukkan perangkat sesuai jumlah disetujui</p>
+                            </div>
+                            <div className={`px-3 py-1.5 rounded-xl border text-[11px] font-black flex items-center gap-2 ${getStatusBadge(canInput && remaining > 0 ? 'pending' : canInput && remaining <= 0 && approvedCount > 0 ? 'ok' : 'pending').className}`}>
+                              {getStatusBadge(canInput && remaining > 0 ? 'pending' : canInput && remaining <= 0 && approvedCount > 0 ? 'ok' : 'pending').icon}
+                              {getStatusBadge(canInput && remaining > 0 ? 'pending' : canInput && remaining <= 0 && approvedCount > 0 ? 'ok' : 'pending').text}
+                            </div>
+                          </div>
+
+                          {!suratOk && (
+                            <div className="mt-5 bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-sm font-bold text-slate-600">
+                              Upload surat dan isi jumlah perangkat yang diminta.
+                            </div>
+                          )}
+
+                          {suratOk && requestDraft.stockStatus !== 'ready' && (
+                            <div className="mt-5 bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-sm font-bold text-slate-600">
+                              Koreksi stok harus <span className="text-emerald-700">Stok Ready</span> untuk lanjut input perangkat.
+                            </div>
+                          )}
+
+                          {suratOk && requestDraft.stockStatus === 'ready' && (requestDraft.kabid.status !== 'approved' || requestDraft.sekban.status !== 'approved') && (
+                            <div className="mt-5 bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-sm font-bold text-slate-600">
+                              Disposisi Kabid IPSIPD dan Sekretaris Badan harus <span className="text-emerald-700">Setuju</span>.
+                            </div>
+                          )}
+
+                          {canInput && (
+                            <>
+                              {approvedCount > 0 && remaining <= 0 ? (
+                                <div className="mt-5 bg-emerald-50 border border-emerald-100 rounded-2xl px-4 py-3 text-sm font-black text-emerald-700">
+                                  PERMINTAAN DISETUJUI, jumlah perangkat yang disetujui: {approvedCount}
+                                </div>
+                              ) : (
+                                <div className="mt-5 bg-amber-50 border border-amber-100 rounded-2xl px-4 py-3 text-sm font-black text-amber-800">
+                                  Sisa input perangkat: {Math.max(0, remaining)} / {approvedCount}
+                                </div>
+                              )}
+
+                              <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Nama Perangkat</label>
+                                  <input
+                                    type="text"
+                                    value={String(newDeviceDraft.name || '')}
+                                    onChange={(e) => setNewDeviceDraft(prev => ({ ...prev, name: e.target.value }))}
+                                    className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-bold text-sm"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Jenis Layanan</label>
+                                  <input
+                                    type="text"
+                                    value={String(newDeviceDraft.serviceUnit || '')}
+                                    onChange={(e) => setNewDeviceDraft(prev => ({ ...prev, serviceUnit: e.target.value }))}
+                                    className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-bold text-sm"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Serial Number</label>
+                                  <input
+                                    type="text"
+                                    value={String(newDeviceDraft.serialNumber || '')}
+                                    onChange={(e) => setNewDeviceDraft(prev => ({ ...prev, serialNumber: e.target.value }))}
+                                    className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-bold text-sm"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">No HP User</label>
+                                  <input
+                                    type="text"
+                                    value={String(newDeviceDraft.phoneNumber || '')}
+                                    onChange={(e) => setNewDeviceDraft(prev => ({ ...prev, phoneNumber: e.target.value }))}
+                                    className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-bold text-sm"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Pemegang (Staff)</label>
+                                  <input
+                                    type="text"
+                                    value={String(newDeviceDraft.subLocation || '')}
+                                    onChange={(e) => setNewDeviceDraft(prev => ({ ...prev, subLocation: e.target.value }))}
+                                    className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-bold text-sm"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Kondisi</label>
+                                  <select
+                                    value={String(newDeviceDraft.condition || 'Baik')}
+                                    onChange={(e) => setNewDeviceDraft(prev => ({ ...prev, condition: e.target.value }))}
+                                    className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-bold text-sm"
+                                  >
+                                    <option value="Baik">Baik</option>
+                                    <option value="Kurang Baik">Kurang Baik</option>
+                                    <option value="Rusak">Rusak</option>
+                                  </select>
+                                </div>
+                              </div>
+
+                              <button
+                                onClick={addRequestedDevice}
+                                disabled={remaining <= 0}
+                                className="mt-6 w-full bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl font-black flex items-center justify-center gap-2 disabled:bg-slate-200 disabled:text-slate-500"
+                              >
+                                <Plus className="w-5 h-5" />
+                                Tambah Perangkat (1)
+                              </button>
+                            </>
+                          )}
+                        </div>
+
+                        <div className="border border-slate-100 rounded-3xl p-6">
+                          <div className="flex items-center justify-between mb-4">
+                            <div>
+                              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Perangkat Ditambahkan</p>
+                              <p className="text-sm font-black text-slate-900 mt-1">{requestDraft.addedDeviceIds.length} perangkat</p>
+                            </div>
+                            {approvedCount > 0 && (
+                              <div className="text-[11px] font-black text-slate-600">
+                                Disetujui: {approvedCount}
+                              </div>
+                            )}
+                          </div>
+                          <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
+                            {devices.filter(d => requestDraft.addedDeviceIds.includes(d.id)).map(d => (
+                              <div key={d.id} className="flex items-center justify-between bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3">
+                                <div className="min-w-0">
+                                  <p className="text-sm font-black text-slate-900 truncate">{d.name}</p>
+                                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider truncate">{d.serviceUnit} • {d.subLocation}</p>
+                                </div>
+                                <button onClick={() => deleteDevice(d)} className="p-2 rounded-xl hover:bg-rose-50 text-rose-600">
+                                  <Trash2 className="w-5 h-5" />
+                                </button>
+                              </div>
+                            ))}
+                            {devices.filter(d => requestDraft.addedDeviceIds.includes(d.id)).length === 0 && (
+                              <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-sm font-bold text-slate-600">
+                                Belum ada perangkat yang ditambahkan.
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             </motion.div>
           </div>
