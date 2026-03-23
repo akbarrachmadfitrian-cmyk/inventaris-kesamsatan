@@ -1,10 +1,10 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import axios from 'axios'
 import { QRCodeSVG } from 'qrcode.react'
 import { 
-  Camera, Upload, CheckCircle2, QrCode, Search, RefreshCw, Smartphone, 
-  Monitor, Printer, HardDrive, Package, LayoutDashboard, ChevronRight, 
-  MapPin, Building2, Layers, ArrowLeft, Filter, Info, XCircle, AlertTriangle, 
+  Camera, Upload, CheckCircle2, QrCode, Search, RefreshCw,
+  Monitor, Printer, LayoutDashboard, ChevronRight,
+  Building2, Layers, XCircle, AlertTriangle,
   ChevronDown, List, MoreVertical
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -40,6 +40,115 @@ interface Stats {
   tidakLengkapTidakBaik: number;
 }
 
+const parseSheetCSV = (csvData: string, defaultSamsat: string): Device[] => {
+  const lines = csvData.split(/\r?\n/).filter(line => line.trim());
+  if (lines.length === 0) return [];
+
+  const firstLine = lines[0];
+  const separator = firstLine.includes(';') && !firstLine.includes(',') ? ';' : ',';
+
+  let currentSamsat = defaultSamsat;
+  const sheetDevices: Device[] = [];
+
+  lines.forEach((line, index) => {
+    const cells = line.split(separator).map(cell => cell.replace(/^"|"$/g, '').trim());
+
+    if (cells.length < 2) {
+      if (cells[0].toUpperCase().includes('SAMSAT')) {
+        let name = cells[0].trim();
+        name = name.replace(/UPPD\s+/gi, '').trim();
+        name = name.replace(/^SAMSAT\s+/gi, '').trim();
+        currentSamsat = "SAMSAT " + name;
+      }
+      return;
+    }
+
+    const nonInternalEmpty = cells.filter(c => c !== "").length;
+    const potentialSamsat = cells.find(c => c.toUpperCase().includes('SAMSAT'));
+    if (potentialSamsat && nonInternalEmpty <= 3 && !/^\d+$/.test(cells[0])) {
+      let name = potentialSamsat.trim();
+      name = name.replace(/UPPD\s+/gi, '').trim();
+      name = name.replace(/^SAMSAT\s+/gi, '').trim();
+      currentSamsat = "SAMSAT " + name;
+      return;
+    }
+
+    const isDataRow = /^\d+$/.test(cells[0]) && cells.length >= 5;
+
+    if (isDataRow) {
+      let finalSamsat = currentSamsat;
+      let finalServiceUnit = cells[4] || "Umum";
+      const serialNumberRaw = (cells[3] || '').trim();
+      const phoneNumberRaw = (cells[8] || '').trim();
+      const normalizeFilled = (value: string) => {
+        const v = value.trim();
+        if (!v) return false;
+        if (/^\?+$/.test(v)) return false;
+        if (v === '-') return false;
+        if (v.toLowerCase() === 'n/a') return false;
+        return true;
+      };
+      const dataComplete = normalizeFilled(serialNumberRaw) && normalizeFilled(phoneNumberRaw);
+
+      if (currentSamsat.toUpperCase().includes("HANDIL BAKTI")) {
+        finalSamsat = "SAMSAT MARABAHAN";
+        finalServiceUnit = "SAMSAT BANTU HANDIL BAKTI";
+      }
+
+      sheetDevices.push({
+        id: cells[3] || `dev-${defaultSamsat}-${index}`,
+        name: cells[1] || "Perangkat Tanpa Nama",
+        category: cells[2] || "Aset",
+        location: currentSamsat,
+        subLocation: cells[6] || "Staff",
+        serialNumber: serialNumberRaw || "N/A",
+        phoneNumber: phoneNumberRaw,
+        condition: cells[5] || "Baik",
+        isComplete: false,
+        dataComplete,
+        samsat: finalSamsat,
+        serviceUnit: finalServiceUnit,
+        sheetName: defaultSamsat
+      });
+    }
+  });
+
+  return sheetDevices;
+};
+
+const generateMockData = (): Device[] => {
+  const samsats = ["SAMSAT Banjarmasin I", "SAMSAT Banjarmasin II", "SAMSAT Banjarbaru", "SAMSAT Martapura"];
+  const services = ["KASIR", "PELAYANAN INDUK", "DRIVE THRU", "SAMSAT KELILING"];
+  const names = ["PC LENOVO", "PRINTER HP", "SCANNER CANON", "UPS APC"];
+  const staff = ["POPY", "SOPHIE", "DEA", "AHMAD", "BUDI"];
+
+  const mock: Device[] = [];
+  samsats.forEach(s => {
+    services.forEach(serv => {
+      const count = 5;
+      for (let i = 0; i < count; i++) {
+        const name = names[Math.floor(Math.random() * names.length)];
+        mock.push({
+          id: `MOCK-${s.replace(/\s+/g, '-')}-${serv}-${i}`,
+          name: name,
+          category: name.split(' ')[0],
+          location: serv,
+          subLocation: staff[Math.floor(Math.random() * staff.length)],
+          serialNumber: `SN-MOCK-${Math.random().toString(36).toUpperCase().slice(2, 6)}`,
+          phoneNumber: Math.random() > 0.25 ? `08${Math.floor(100000000 + Math.random() * 900000000)}` : '???',
+          condition: Math.random() > 0.8 ? "Kurang Baik" : "Baik",
+          isComplete: false,
+          dataComplete: Math.random() > 0.3,
+          samsat: s,
+          serviceUnit: serv,
+          sheetName: "Mock Data"
+        });
+      }
+    });
+  });
+  return mock;
+};
+
 function App() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,14 +164,7 @@ function App() {
   const [activeSamsat, setActiveSamsat] = useState<string | null>(null);
   const [showSamsatDropdown, setShowSamsatDropdown] = useState(false);
 
-  useEffect(() => {
-    // Muat mock data segera agar UI tidak kosong
-    setDevices(generateMockData());
-    // Kemudian coba ambil data asli
-    fetchData();
-  }, []);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       const sheets = [
@@ -139,123 +241,14 @@ function App() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const parseSheetCSV = (csvData: string, defaultSamsat: string): Device[] => {
-    const lines = csvData.split(/\r?\n/).filter(line => line.trim());
-    if (lines.length === 0) return [];
-
-    const firstLine = lines[0];
-    const separator = firstLine.includes(';') && !firstLine.includes(',') ? ';' : ',';
-    
-    let currentSamsat = defaultSamsat;
-    const sheetDevices: Device[] = [];
-
-    lines.forEach((line, index) => {
-      const cells = line.split(separator).map(cell => cell.replace(/^"|"$/g, '').trim());
-      
-      if (cells.length < 2) {
-        if (cells[0].toUpperCase().includes('SAMSAT')) {
-          let name = cells[0].trim();
-          // Pembersihan nama: hapus UPPD dan pastikan hanya satu kata SAMSAT di depan
-          name = name.replace(/UPPD\s+/gi, '').trim();
-          name = name.replace(/^SAMSAT\s+/gi, '').trim();
-          currentSamsat = "SAMSAT " + name;
-        }
-        return;
-      }
-
-      const nonInternalEmpty = cells.filter(c => c !== "").length;
-      const potentialSamsat = cells.find(c => c.toUpperCase().includes('SAMSAT'));
-      if (potentialSamsat && nonInternalEmpty <= 3 && !/^\d+$/.test(cells[0])) {
-        let name = potentialSamsat.trim();
-        // Pembersihan nama: hapus UPPD dan pastikan hanya satu kata SAMSAT di depan
-        name = name.replace(/UPPD\s+/gi, '').trim();
-        name = name.replace(/^SAMSAT\s+/gi, '').trim();
-        currentSamsat = "SAMSAT " + name;
-        return;
-      }
-
-      const isDataRow = /^\d+$/.test(cells[0]) && cells.length >= 5;
-      
-      if (isDataRow) {
-        let finalSamsat = currentSamsat;
-        let finalServiceUnit = cells[4] || "Umum";
-        const serialNumberRaw = (cells[3] || '').trim();
-        const phoneNumberRaw = (cells[8] || '').trim();
-        const normalizeFilled = (value: string) => {
-          const v = value.trim();
-          if (!v) return false;
-          if (/^\?+$/.test(v)) return false;
-          if (v === '-') return false;
-          if (v.toLowerCase() === 'n/a') return false;
-          return true;
-        };
-        const dataComplete = normalizeFilled(serialNumberRaw) && normalizeFilled(phoneNumberRaw);
-
-        // Khusus: Masukkan Handil Bakti ke dalam Marabahan sebagai sub-layanan
-        if (currentSamsat.toUpperCase().includes("HANDIL BAKTI")) {
-          finalSamsat = "SAMSAT MARABAHAN";
-          finalServiceUnit = "SAMSAT BANTU HANDIL BAKTI";
-        }
-
-        sheetDevices.push({
-          id: cells[3] || `dev-${defaultSamsat}-${index}`,
-          name: cells[1] || "Perangkat Tanpa Nama",
-          category: cells[2] || "Aset",
-          location: currentSamsat,
-          subLocation: cells[6] || "Staff",
-          serialNumber: serialNumberRaw || "N/A",
-          phoneNumber: phoneNumberRaw,
-          condition: cells[5] || "Baik",
-          isComplete: false,
-          dataComplete,
-          samsat: finalSamsat,
-          serviceUnit: finalServiceUnit,
-          sheetName: defaultSamsat
-        });
-      }
-    });
-
-    return sheetDevices;
-  };
-
-  const processCSV = (csvData: string) => {
-    // This is now replaced by parseSheetCSV and handled in fetchData
-  };
-
-  const generateMockData = (): Device[] => {
-    const samsats = ["SAMSAT Banjarmasin I", "SAMSAT Banjarmasin II", "SAMSAT Banjarbaru", "SAMSAT Martapura"];
-    const services = ["KASIR", "PELAYANAN INDUK", "DRIVE THRU", "SAMSAT KELILING"];
-    const names = ["PC LENOVO", "PRINTER HP", "SCANNER CANON", "UPS APC"];
-    const staff = ["POPY", "SOPHIE", "DEA", "AHMAD", "BUDI"];
-    
-    const mock: Device[] = [];
-    samsats.forEach(s => {
-      services.forEach(serv => {
-        const count = 5;
-        for (let i = 0; i < count; i++) {
-          const name = names[Math.floor(Math.random() * names.length)];
-          mock.push({
-            id: `MOCK-${s.replace(/\s+/g, '-')}-${serv}-${i}`,
-            name: name,
-            category: name.split(' ')[0],
-            location: serv,
-            subLocation: staff[Math.floor(Math.random() * staff.length)],
-            serialNumber: `SN-MOCK-${Math.random().toString(36).toUpperCase().slice(2, 6)}`,
-            phoneNumber: Math.random() > 0.25 ? `08${Math.floor(100000000 + Math.random() * 900000000)}` : '???',
-            condition: Math.random() > 0.8 ? "Kurang Baik" : "Baik",
-            isComplete: false,
-            dataComplete: Math.random() > 0.3,
-            samsat: s,
-            serviceUnit: serv,
-            sheetName: "Mock Data"
-          });
-        }
-      });
-    });
-    return mock;
-  };
+  useEffect(() => {
+    // Muat mock data segera agar UI tidak kosong
+    setDevices(generateMockData());
+    // Kemudian coba ambil data asli
+    fetchData();
+  }, [fetchData]);
 
   const handlePhotoUpload = (deviceId: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -391,7 +384,7 @@ function App() {
           </div>
           <div>
             <h1 className="text-sm font-bold text-slate-900 leading-tight">Inventaris Kesamsatan</h1>
-            <p className="text-[10px] text-slate-500 font-medium">UPPD Banjarmasin</p>
+            <p className="text-[10px] text-slate-500 font-medium">BAPENDA PROV KALSEL</p>
           </div>
         </div>
 
@@ -664,7 +657,7 @@ function App() {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {filteredDevices.map((d, i) => (
+                {filteredDevices.map((d) => (
                   <motion.div 
                     key={d.id}
                     onClick={() => setSelectedDevice(d)}
