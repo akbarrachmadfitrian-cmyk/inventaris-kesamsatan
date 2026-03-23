@@ -379,13 +379,12 @@ function App() {
       {/* Sidebar */}
       <aside className="w-72 bg-white border-r border-slate-200 flex flex-col z-40 shrink-0">
         <div className="p-6 flex flex-col items-center gap-3 border-b border-slate-50">
-          <div className="w-20 h-20 bg-slate-100 rounded-3xl flex items-center justify-center text-blue-600">
-            <img
-              src="/bapenda-kalsel.svg"
-              alt="Bapenda Kalimantan Selatan"
-              className="w-16 h-16 object-contain"
-            />
-          </div>
+          <img
+            src="https://bapenda.kalselprov.go.id/wp-content/uploads/2024/05/Logo-BAPENDA-no-bg-3.png"
+            alt="Bapenda Kalimantan Selatan"
+            referrerPolicy="no-referrer"
+            className="h-12 w-auto object-contain"
+          />
           <div className="text-center">
             <h1 className="text-sm font-bold text-slate-900 leading-tight">Inventaris Kesamsatan</h1>
             <p className="text-[10px] text-slate-500 font-medium">BAPENDA PROV KALSEL</p>
