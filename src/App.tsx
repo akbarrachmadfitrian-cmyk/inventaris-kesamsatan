@@ -43,6 +43,7 @@ interface Stats {
 
 type StockStatus = 'ready' | 'empty' | 'standby';
 type ApprovalStatus = 'approved' | 'rejected' | 'pending';
+type RequestType = 'PC KESAMSATAN' | 'PRINTER KESAMSATAN';
 
 interface DeviceRequestLetter {
   fileName: string;
@@ -53,6 +54,7 @@ interface DeviceRequestLetter {
 
 interface DeviceRequest {
   samsat: string;
+  requestType: RequestType;
   requestedCount: number;
   letter: DeviceRequestLetter | null;
   stockStatus: StockStatus;
@@ -86,6 +88,7 @@ const saveDeviceRequests = (requests: Record<string, DeviceRequest>) => localSto
 
 const createDefaultRequest = (samsat: string): DeviceRequest => ({
   samsat,
+  requestType: 'PC KESAMSATAN',
   requestedCount: 0,
   letter: null,
   stockStatus: 'standby',
@@ -287,7 +290,12 @@ function App() {
   const openRequestModal = () => {
     if (!activeSamsat) return;
     const requests = loadDeviceRequests();
-    const req = requests[activeSamsat] || createDefaultRequest(activeSamsat);
+    const reqRaw = requests[activeSamsat] || createDefaultRequest(activeSamsat);
+    const req: DeviceRequest = {
+      ...createDefaultRequest(activeSamsat),
+      ...reqRaw,
+      requestType: (reqRaw as DeviceRequest).requestType || 'PC KESAMSATAN'
+    };
     setRequestDraft(req);
     setNewDeviceDraft({ condition: 'Baik', samsat: activeSamsat });
     setIsRequestModalOpen(true);
@@ -1141,14 +1149,14 @@ function App() {
       <AnimatePresence>
         {isRequestModalOpen && requestDraft && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-[3rem] w-full max-w-5xl overflow-hidden shadow-2xl relative">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-[3rem] w-full max-w-5xl max-h-[calc(100vh-2rem)] overflow-hidden shadow-2xl relative">
               <button onClick={() => setIsRequestModalOpen(false)} className="absolute top-8 right-8 p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl z-20">
                 <XCircle className="w-6 h-6 text-slate-400" />
               </button>
-              <div className="p-10">
-                <div className="mb-8">
-                  <h3 className="text-2xl font-black text-slate-900">Tambah Perangkat — {requestDraft.samsat}</h3>
-                  <p className="text-sm text-slate-500 font-medium mt-1">Kelola alur permintaan, koreksi stok, disposisi, dan input perangkat.</p>
+              <div className="p-6 md:p-10 overflow-y-auto max-h-[calc(100vh-2rem)]">
+                <div className="mb-6">
+                  <h3 className="text-xl font-black text-slate-900">Tambah Perangkat — {requestDraft.samsat}</h3>
+                  <p className="text-xs text-slate-500 font-bold mt-1">Kelola alur permintaan, koreksi stok, disposisi, dan input perangkat.</p>
                 </div>
 
                 {(() => {
@@ -1165,24 +1173,24 @@ function App() {
                   const canInput = suratOk && approvedCount > 0;
 
                   return (
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                      <div className="space-y-6">
-                        <div className="border border-slate-100 rounded-3xl p-6">
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      <div className="space-y-4">
+                        <div className="border border-slate-100 rounded-3xl p-5">
                           <div className="flex items-center justify-between">
                             <div>
-                              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Surat Permintaan</p>
-                              <p className="text-sm font-black text-slate-900 mt-1">Upload surat dan jumlah perangkat</p>
+                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Surat Permintaan</p>
+                              <p className="text-xs font-black text-slate-900 mt-1">Upload surat dan jumlah perangkat</p>
                             </div>
-                            <div className={`px-3 py-1.5 rounded-xl border text-[11px] font-black flex items-center gap-2 ${getStatusBadge(suratOk ? 'ok' : 'pending').className}`}>
+                            <div className={`px-3 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-2 ${getStatusBadge(suratOk ? 'ok' : 'pending').className}`}>
                               {getStatusBadge(suratOk ? 'ok' : 'pending').icon}
                               {getStatusBadge(suratOk ? 'ok' : 'pending').text}
                             </div>
                           </div>
 
-                          <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4">
+                          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3">
                               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Upload Surat</p>
-                              <label className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 flex items-center justify-center gap-2 font-bold text-sm text-slate-700 hover:bg-slate-50 cursor-pointer">
+                              <label className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-2 flex items-center justify-center gap-2 font-bold text-xs text-slate-700 hover:bg-slate-50 cursor-pointer">
                                 <FileUp className="w-5 h-5 text-slate-500" />
                                 <span>{requestDraft.letter ? 'Ganti Surat' : 'Pilih Surat'}</span>
                                 <input type="file" className="hidden" accept="image/*,application/pdf" onChange={handleLetterUpload} />
@@ -1199,17 +1207,28 @@ function App() {
                                 </div>
                               )}
                             </div>
-                            <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4">
+                            <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3">
+                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Jenis Permintaan Perangkat</p>
+                              <select
+                                value={requestDraft.requestType}
+                                onChange={(e) => persistRequestDraft({ ...requestDraft, requestType: e.target.value as RequestType })}
+                                className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-2 text-xs font-black text-slate-900"
+                              >
+                                <option value="PC KESAMSATAN">PC KESAMSATAN</option>
+                                <option value="PRINTER KESAMSATAN">PRINTER KESAMSATAN</option>
+                              </select>
+                            </div>
+                            <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3">
                               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Jumlah Diminta</p>
                               <input
                                 type="number"
                                 min={0}
                                 value={requestDraft.requestedCount}
                                 onChange={(e) => persistRequestDraft({ ...requestDraft, requestedCount: Math.max(0, Number(e.target.value || 0)) })}
-                                className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                                className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-2 text-xs font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                               />
                               {suratOk && (
-                                <div className="mt-3 text-[11px] font-black text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-2xl px-4 py-3">
+                                <div className="mt-3 text-[10px] font-black text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-2xl px-4 py-2">
                                   SURAT SUDAH MASUK DALAM PROSES DISPOSISI
                                 </div>
                               )}
@@ -1217,22 +1236,22 @@ function App() {
                           </div>
                         </div>
 
-                        <div className="border border-slate-100 rounded-3xl p-6">
+                        <div className="border border-slate-100 rounded-3xl p-5">
                           <div className="flex items-center justify-between">
                             <div>
-                              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Koreksi Stok</p>
-                              <p className="text-sm font-black text-slate-900 mt-1">Cek ketersediaan stok</p>
+                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Koreksi Stok</p>
+                              <p className="text-xs font-black text-slate-900 mt-1">Cek ketersediaan stok</p>
                             </div>
-                            <div className={`px-3 py-1.5 rounded-xl border text-[11px] font-black flex items-center gap-2 ${stockBadge.className}`}>
+                            <div className={`px-3 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-2 ${stockBadge.className}`}>
                               {stockBadge.icon}
                               {stockBadge.text}
                             </div>
                           </div>
-                          <div className="mt-5">
+                          <div className="mt-4">
                             <select
                               value={requestDraft.stockStatus}
                               onChange={(e) => persistRequestDraft({ ...requestDraft, stockStatus: e.target.value as StockStatus })}
-                              className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-black text-slate-900"
+                              className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-2 text-xs font-black text-slate-900"
                             >
                               <option value="standby">Stand By (DALAM PROSES)</option>
                               <option value="ready">Stok Ready</option>
@@ -1241,18 +1260,18 @@ function App() {
                           </div>
                         </div>
 
-                        <div className="border border-slate-100 rounded-3xl p-6">
+                        <div className="border border-slate-100 rounded-3xl p-5">
                           <div className="flex items-center justify-between">
                             <div>
-                              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Disposisi Kabid IPSIPD</p>
-                              <p className="text-sm font-black text-slate-900 mt-1">Status persetujuan dan jumlah</p>
+                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Disposisi Kabid IPSIPD</p>
+                              <p className="text-xs font-black text-slate-900 mt-1">Status persetujuan dan jumlah</p>
                             </div>
-                            <div className={`px-3 py-1.5 rounded-xl border text-[11px] font-black flex items-center gap-2 ${kabidBadge.className}`}>
+                            <div className={`px-3 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-2 ${kabidBadge.className}`}>
                               {kabidBadge.icon}
                               {kabidBadge.text}
                             </div>
                           </div>
-                          <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
                             <select
                               value={requestDraft.kabid.status}
                               onChange={(e) => {
@@ -1262,7 +1281,7 @@ function App() {
                                   kabid: { status: nextStatus, approvedCount: nextStatus === 'approved' ? (requestDraft.kabid.approvedCount ?? requestDraft.requestedCount) : null }
                                 });
                               }}
-                              className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-black text-slate-900"
+                              className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-2 text-xs font-black text-slate-900"
                             >
                               <option value="pending">Stand By (DALAM PROSES)</option>
                               <option value="approved">Setuju</option>
@@ -1274,24 +1293,24 @@ function App() {
                               disabled={requestDraft.kabid.status !== 'approved'}
                               value={requestDraft.kabid.status === 'approved' ? Number(requestDraft.kabid.approvedCount || 0) : 0}
                               onChange={(e) => persistRequestDraft({ ...requestDraft, kabid: { ...requestDraft.kabid, approvedCount: Math.max(0, Number(e.target.value || 0)) } })}
-                              className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-black text-slate-900 disabled:bg-slate-50 disabled:text-slate-400"
+                              className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-2 text-xs font-black text-slate-900 disabled:bg-slate-50 disabled:text-slate-400"
                               placeholder="Jumlah disetujui"
                             />
                           </div>
                         </div>
 
-                        <div className="border border-slate-100 rounded-3xl p-6">
+                        <div className="border border-slate-100 rounded-3xl p-5">
                           <div className="flex items-center justify-between">
                             <div>
-                              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Disposisi Sekretaris Badan</p>
-                              <p className="text-sm font-black text-slate-900 mt-1">Status persetujuan dan jumlah</p>
+                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Disposisi Sekretaris Badan</p>
+                              <p className="text-xs font-black text-slate-900 mt-1">Status persetujuan dan jumlah</p>
                             </div>
-                            <div className={`px-3 py-1.5 rounded-xl border text-[11px] font-black flex items-center gap-2 ${sekbanBadge.className}`}>
+                            <div className={`px-3 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-2 ${sekbanBadge.className}`}>
                               {sekbanBadge.icon}
                               {sekbanBadge.text}
                             </div>
                           </div>
-                          <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
                             <select
                               value={requestDraft.sekban.status}
                               onChange={(e) => {
@@ -1301,7 +1320,7 @@ function App() {
                                   sekban: { status: nextStatus, approvedCount: nextStatus === 'approved' ? (requestDraft.sekban.approvedCount ?? requestDraft.requestedCount) : null }
                                 });
                               }}
-                              className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-black text-slate-900"
+                              className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-2 text-xs font-black text-slate-900"
                             >
                               <option value="pending">Stand By (DALAM PROSES)</option>
                               <option value="approved">Setuju</option>
@@ -1313,21 +1332,21 @@ function App() {
                               disabled={requestDraft.sekban.status !== 'approved'}
                               value={requestDraft.sekban.status === 'approved' ? Number(requestDraft.sekban.approvedCount || 0) : 0}
                               onChange={(e) => persistRequestDraft({ ...requestDraft, sekban: { ...requestDraft.sekban, approvedCount: Math.max(0, Number(e.target.value || 0)) } })}
-                              className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-black text-slate-900 disabled:bg-slate-50 disabled:text-slate-400"
+                              className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-2 text-xs font-black text-slate-900 disabled:bg-slate-50 disabled:text-slate-400"
                               placeholder="Jumlah disetujui"
                             />
                           </div>
                         </div>
                       </div>
 
-                      <div className="space-y-6">
-                        <div className="border border-slate-100 rounded-3xl p-6">
+                      <div className="space-y-4">
+                        <div className="border border-slate-100 rounded-3xl p-5">
                           <div className="flex items-center justify-between">
                             <div>
-                              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Input Perangkat</p>
-                              <p className="text-sm font-black text-slate-900 mt-1">Masukkan perangkat sesuai jumlah disetujui</p>
+                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Input Perangkat</p>
+                              <p className="text-xs font-black text-slate-900 mt-1">Masukkan perangkat sesuai jumlah disetujui</p>
                             </div>
-                            <div className={`px-3 py-1.5 rounded-xl border text-[11px] font-black flex items-center gap-2 ${getStatusBadge(canInput && remaining > 0 ? 'pending' : canInput && remaining <= 0 && approvedCount > 0 ? 'ok' : 'pending').className}`}>
+                            <div className={`px-3 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-2 ${getStatusBadge(canInput && remaining > 0 ? 'pending' : canInput && remaining <= 0 && approvedCount > 0 ? 'ok' : 'pending').className}`}>
                               {getStatusBadge(canInput && remaining > 0 ? 'pending' : canInput && remaining <= 0 && approvedCount > 0 ? 'ok' : 'pending').icon}
                               {getStatusBadge(canInput && remaining > 0 ? 'pending' : canInput && remaining <= 0 && approvedCount > 0 ? 'ok' : 'pending').text}
                             </div>
