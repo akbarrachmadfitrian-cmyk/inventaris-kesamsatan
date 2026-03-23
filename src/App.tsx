@@ -6,7 +6,7 @@ import {
   Monitor, Printer, LayoutDashboard, ChevronRight,
   Building2, Layers, XCircle, AlertTriangle,
   Trash2, Plus, FileUp, Clock3,
-  ChevronDown, List
+  ChevronDown, List, KeyRound
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -68,6 +68,22 @@ const LS_DELETED_DEVICE_IDS = 'samsat_deleted_device_ids';
 const LS_ADDED_DEVICES = 'samsat_added_devices';
 const LS_DEVICE_REQUESTS = 'samsat_device_requests';
 
+type AuthRole = 'admin' | 'user';
+
+interface AuthCredentials {
+  adminPassword: string;
+  userPassword: string;
+}
+
+interface AuthSession {
+  role: AuthRole;
+  username: string;
+  loggedInAt: string;
+}
+
+const LS_AUTH_CREDENTIALS = 'samsat_auth_credentials';
+const LS_AUTH_SESSION = 'samsat_auth_session';
+
 const safeParseJSON = <T,>(raw: string | null, fallback: T): T => {
   if (!raw) return fallback;
   try {
@@ -75,6 +91,46 @@ const safeParseJSON = <T,>(raw: string | null, fallback: T): T => {
   } catch {
     return fallback;
   }
+};
+
+const getAuthCredentials = (): AuthCredentials => {
+  if (typeof window === 'undefined') return { adminPassword: 'admin', userPassword: 'user' };
+  const fallback: AuthCredentials = { adminPassword: 'admin', userPassword: 'user' };
+  const raw = localStorage.getItem(LS_AUTH_CREDENTIALS);
+  const parsed = safeParseJSON<Partial<AuthCredentials>>(raw, {});
+  const normalized: AuthCredentials = {
+    adminPassword: typeof parsed.adminPassword === 'string' && parsed.adminPassword.trim() ? parsed.adminPassword : fallback.adminPassword,
+    userPassword: typeof parsed.userPassword === 'string' && parsed.userPassword.trim() ? parsed.userPassword : fallback.userPassword
+  };
+  if (!raw || parsed.adminPassword !== normalized.adminPassword || parsed.userPassword !== normalized.userPassword) {
+    localStorage.setItem(LS_AUTH_CREDENTIALS, JSON.stringify(normalized));
+  }
+  return normalized;
+};
+
+const saveAuthCredentials = (creds: AuthCredentials) => {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(LS_AUTH_CREDENTIALS, JSON.stringify(creds));
+};
+
+const loadAuthSession = (): AuthSession | null => {
+  if (typeof window === 'undefined') return null;
+  const parsed = safeParseJSON<AuthSession | null>(localStorage.getItem(LS_AUTH_SESSION), null);
+  if (!parsed) return null;
+  if (parsed.role !== 'admin' && parsed.role !== 'user') return null;
+  if (typeof parsed.username !== 'string' || !parsed.username.trim()) return null;
+  if (typeof parsed.loggedInAt !== 'string' || !parsed.loggedInAt.trim()) return null;
+  return parsed;
+};
+
+const saveAuthSession = (session: AuthSession) => {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(LS_AUTH_SESSION, JSON.stringify(session));
+};
+
+const clearAuthSession = () => {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem(LS_AUTH_SESSION);
 };
 
 const loadDeletedDeviceIds = () => safeParseJSON<string[]>(localStorage.getItem(LS_DELETED_DEVICE_IDS), []);
@@ -268,6 +324,22 @@ const generateMockData = (): Device[] => {
 };
 
 function App() {
+  const [session, setSession] = useState<AuthSession | null>(() => loadAuthSession());
+  const [authTab, setAuthTab] = useState<AuthRole>('admin');
+  const [authUsername, setAuthUsername] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [isManageLoginOpen, setIsManageLoginOpen] = useState(false);
+  const [manageLoginForm, setManageLoginForm] = useState({
+    currentAdminPassword: '',
+    newAdminPassword: '',
+    confirmAdminPassword: '',
+    newUserPassword: '',
+    confirmUserPassword: ''
+  });
+  const [manageLoginError, setManageLoginError] = useState<string | null>(null);
+  const [manageLoginSuccess, setManageLoginSuccess] = useState<string | null>(null);
+
   const [devices, setDevices] = useState<Device[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -287,7 +359,114 @@ function App() {
     condition: 'Baik'
   });
 
+  const isAdmin = session?.role === 'admin';
+
+  const handleLogin = (role: AuthRole) => {
+    const creds = getAuthCredentials();
+    const expectedPassword = role === 'admin' ? creds.adminPassword : creds.userPassword;
+    const expectedUsername = role === 'admin' ? 'admin' : 'user';
+    const enteredUsername = authUsername.trim();
+
+    if (enteredUsername !== expectedUsername || authPassword !== expectedPassword) {
+      setAuthError('User atau password salah');
+      return;
+    }
+
+    const nextSession: AuthSession = { role, username: expectedUsername, loggedInAt: new Date().toISOString() };
+    setSession(nextSession);
+    saveAuthSession(nextSession);
+    setAuthUsername('');
+    setAuthPassword('');
+    setAuthError(null);
+    setSelectedDevice(null);
+    setIsEditing(false);
+    setViewMode('selection');
+    setActiveSamsat(null);
+    setShowSamsatDropdown(false);
+    setIsRequestModalOpen(false);
+    setRequestDraft(null);
+  };
+
+  const logout = () => {
+    setSession(null);
+    clearAuthSession();
+    setAuthTab('admin');
+    setAuthUsername('');
+    setAuthPassword('');
+    setAuthError(null);
+    setSelectedDevice(null);
+    setIsEditing(false);
+    setSearchTerm('');
+    setViewMode('selection');
+    setActiveSamsat(null);
+    setShowSamsatDropdown(false);
+    setIsRequestModalOpen(false);
+    setRequestDraft(null);
+    setIsManageLoginOpen(false);
+  };
+
+  const saveManageLogin = () => {
+    if (!isAdmin) return;
+
+    const creds = getAuthCredentials();
+    if (manageLoginForm.currentAdminPassword !== creds.adminPassword) {
+      setManageLoginError('Password super admin saat ini salah');
+      setManageLoginSuccess(null);
+      return;
+    }
+
+    let nextCreds = { ...creds };
+
+    const adminUpdateAttempt = !!manageLoginForm.newAdminPassword || !!manageLoginForm.confirmAdminPassword;
+    if (adminUpdateAttempt) {
+      if (!manageLoginForm.newAdminPassword || !manageLoginForm.confirmAdminPassword) {
+        setManageLoginError('Lengkapi password super admin baru dan konfirmasi');
+        setManageLoginSuccess(null);
+        return;
+      }
+      if (manageLoginForm.newAdminPassword !== manageLoginForm.confirmAdminPassword) {
+        setManageLoginError('Konfirmasi password super admin tidak sama');
+        setManageLoginSuccess(null);
+        return;
+      }
+      nextCreds = { ...nextCreds, adminPassword: manageLoginForm.newAdminPassword };
+    }
+
+    const userUpdateAttempt = !!manageLoginForm.newUserPassword || !!manageLoginForm.confirmUserPassword;
+    if (userUpdateAttempt) {
+      if (!manageLoginForm.newUserPassword || !manageLoginForm.confirmUserPassword) {
+        setManageLoginError('Lengkapi password user baru dan konfirmasi');
+        setManageLoginSuccess(null);
+        return;
+      }
+      if (manageLoginForm.newUserPassword !== manageLoginForm.confirmUserPassword) {
+        setManageLoginError('Konfirmasi password user tidak sama');
+        setManageLoginSuccess(null);
+        return;
+      }
+      nextCreds = { ...nextCreds, userPassword: manageLoginForm.newUserPassword };
+    }
+
+    if (!adminUpdateAttempt && !userUpdateAttempt) {
+      setManageLoginError('Isi minimal satu perubahan password');
+      setManageLoginSuccess(null);
+      return;
+    }
+
+    saveAuthCredentials(nextCreds);
+    setManageLoginError(null);
+    setManageLoginSuccess('Password berhasil diperbarui');
+    setManageLoginForm({
+      currentAdminPassword: '',
+      newAdminPassword: '',
+      confirmAdminPassword: '',
+      newUserPassword: '',
+      confirmUserPassword: ''
+    });
+  };
+
   const openRequestModal = () => {
+    if (!isAdmin) return;
     if (!activeSamsat) return;
     const requests = loadDeviceRequests();
     const reqRaw = requests[activeSamsat] || createDefaultRequest(activeSamsat);
@@ -302,6 +481,7 @@ function App() {
   };
 
   const persistRequestDraft = (next: DeviceRequest) => {
+    if (!isAdmin) return;
     const requests = loadDeviceRequests();
     requests[next.samsat] = next;
     saveDeviceRequests(requests);
@@ -309,6 +489,10 @@ function App() {
   };
 
   const deleteDevice = (device: Device) => {
+    if (!isAdmin) {
+      window.alert('Akses terbatas. Hanya Super Admin yang dapat menghapus perangkat.');
+      return;
+    }
     const ok = window.confirm(`Hapus perangkat "${device.name}"?`);
     if (!ok) return;
 
@@ -355,6 +539,7 @@ function App() {
   };
 
   const addRequestedDevice = () => {
+    if (!isAdmin) return;
     if (!requestDraft || !activeSamsat) return;
     const approvedCount = getApprovedCount(requestDraft);
     const remaining = approvedCount - requestDraft.addedDeviceIds.length;
@@ -414,6 +599,7 @@ function App() {
   };
 
   const handleLetterUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!isAdmin) return;
     if (!requestDraft) return;
     const file = e.target.files?.[0];
     if (!file) return;
@@ -525,6 +711,10 @@ function App() {
   }, [fetchData]);
 
   const handlePhotoUpload = (deviceId: string, e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!isAdmin) {
+      window.alert('Akses terbatas. Hanya Super Admin yang dapat upload foto.');
+      return;
+    }
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
@@ -542,6 +732,7 @@ function App() {
   };
 
   const handleUpdateDevice = () => {
+    if (!isAdmin) return;
     if (!selectedDevice || !editForm.id) return;
     
     const updatedDeviceId = editForm.id;
@@ -648,6 +839,91 @@ function App() {
     return result;
   }, [currentSamsatDevices, searchTerm]);
 
+  useEffect(() => {
+    getAuthCredentials();
+  }, []);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setIsEditing(false);
+      setIsRequestModalOpen(false);
+    }
+  }, [isAdmin]);
+
+  if (!session) {
+    return (
+      <div className="min-h-screen bg-[#F8FAFC] text-[#1E293B] font-sans flex items-center justify-center p-6">
+        <div className="w-full max-w-md">
+          <div className="flex flex-col items-center mb-7">
+            <img
+              src="https://bapenda.kalselprov.go.id/wp-content/uploads/2025/08/Logo-Sayembara-Bapenda.png"
+              alt="Bapenda Kalimantan Selatan"
+              referrerPolicy="no-referrer"
+              className="h-20 w-auto object-contain"
+            />
+            <h1 className="mt-4 text-xl font-black text-slate-900 text-center">Inventaris Kesamsatan</h1>
+            <p className="text-[11px] text-slate-500 font-bold text-center">BAPENDA PROV KALSEL</p>
+          </div>
+
+          <div className="bg-white border border-slate-200 rounded-[2rem] p-8 shadow-sm">
+            <div className="grid grid-cols-2 bg-slate-50 border border-slate-200 rounded-2xl p-1 mb-6">
+              <button
+                onClick={() => { setAuthTab('admin'); setAuthUsername(''); setAuthPassword(''); setAuthError(null); }}
+                className={`py-2 rounded-xl text-xs font-black transition-all ${authTab === 'admin' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                Super Admin
+              </button>
+              <button
+                onClick={() => { setAuthTab('user'); setAuthUsername(''); setAuthPassword(''); setAuthError(null); }}
+                className={`py-2 rounded-xl text-xs font-black transition-all ${authTab === 'user' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                User
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">User</label>
+                <input
+                  value={authUsername}
+                  onChange={(e) => setAuthUsername(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleLogin(authTab); }}
+                  className="w-full p-3 bg-white border border-slate-200 rounded-xl font-bold text-sm focus:ring-2 focus:ring-blue-500/20 outline-none"
+                  placeholder="Masukkan user"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Password</label>
+                <input
+                  type="password"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleLogin(authTab); }}
+                  className="w-full p-3 bg-white border border-slate-200 rounded-xl font-bold text-sm focus:ring-2 focus:ring-blue-500/20 outline-none"
+                  placeholder="Masukkan password"
+                />
+              </div>
+
+              {authError && (
+                <div className="px-4 py-3 bg-rose-50 border border-rose-100 rounded-2xl text-rose-700 text-xs font-bold">
+                  {authError}
+                </div>
+              )}
+
+              <button
+                onClick={() => handleLogin(authTab)}
+                className="w-full px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black transition-all shadow-lg shadow-blue-200"
+              >
+                Masuk
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-[#1E293B] font-sans flex overflow-hidden">
       {/* Sidebar */}
@@ -662,6 +938,17 @@ function App() {
           <div className="text-center">
             <h1 className="text-sm font-bold text-slate-900 leading-tight">Inventaris Kesamsatan</h1>
             <p className="text-[10px] text-slate-500 font-medium">BAPENDA PROV KALSEL</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className={`px-3 py-1.5 rounded-xl text-[10px] font-black border ${isAdmin ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-slate-50 text-slate-700 border-slate-200'}`}>
+              {isAdmin ? 'SUPER ADMIN' : 'USER'}
+            </div>
+            <button
+              onClick={logout}
+              className="px-3 py-1.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-[10px] font-black transition-colors"
+            >
+              Keluar
+            </button>
           </div>
         </div>
 
@@ -738,13 +1025,24 @@ function App() {
                 <Monitor className="w-5 h-5" />
                 <span>Daftar Perangkat</span>
               </button>
-              <button
-                onClick={openRequestModal}
-                className="w-full flex items-center gap-3 p-3 rounded-xl font-bold text-sm transition-all text-slate-500 hover:bg-slate-50"
-              >
-                <Plus className="w-5 h-5" />
-                <span>Tambah Perangkat</span>
-              </button>
+              {isAdmin && (
+                <button
+                  onClick={openRequestModal}
+                  className="w-full flex items-center gap-3 p-3 rounded-xl font-bold text-sm transition-all text-slate-500 hover:bg-slate-50"
+                >
+                  <Plus className="w-5 h-5" />
+                  <span>Tambah Perangkat</span>
+                </button>
+              )}
+              {isAdmin && (
+                <button
+                  onClick={() => { setIsManageLoginOpen(true); setManageLoginError(null); setManageLoginSuccess(null); }}
+                  className="w-full flex items-center gap-3 p-3 rounded-xl font-bold text-sm transition-all text-slate-500 hover:bg-slate-50"
+                >
+                  <KeyRound className="w-5 h-5" />
+                  <span>Manajemen Login</span>
+                </button>
+              )}
             </>
           )}
         </nav>
@@ -936,13 +1234,15 @@ function App() {
                   />
                 </div>
                 {activeSamsat && (
-                  <button
-                    onClick={openRequestModal}
-                    className="px-5 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black transition-all shadow-lg shadow-blue-200 flex items-center gap-2"
-                  >
-                    <Plus className="w-5 h-5" />
-                    Tambah Perangkat
-                  </button>
+                  isAdmin ? (
+                    <button
+                      onClick={openRequestModal}
+                      className="px-5 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black transition-all shadow-lg shadow-blue-200 flex items-center gap-2"
+                    >
+                      <Plus className="w-5 h-5" />
+                      Tambah Perangkat
+                    </button>
+                  ) : null
                 )}
                 <button onClick={fetchData} className="p-3 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 transition-colors">
                   <RefreshCw className={`w-5 h-5 text-slate-600 ${loading ? 'animate-spin' : ''}`} />
@@ -960,13 +1260,15 @@ function App() {
                       <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-400 group-hover:text-blue-600 transition-all">
                         {d.category.toLowerCase().includes('printer') ? <Printer className="w-6 h-6" /> : <Monitor className="w-6 h-6" />}
                       </div>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); deleteDevice(d); }}
-                        className="p-2 rounded-xl hover:bg-rose-50 text-rose-600 transition-colors"
-                        aria-label="Hapus perangkat"
-                      >
-                        <Trash2 className="w-5 h-5" />
-                      </button>
+                      {isAdmin && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); deleteDevice(d); }}
+                          className="p-2 rounded-xl hover:bg-rose-50 text-rose-600 transition-colors"
+                          aria-label="Hapus perangkat"
+                        >
+                          <Trash2 className="w-5 h-5" />
+                        </button>
+                      )}
                     </div>
                     <h4 className="font-black text-slate-900 mb-1">{d.name}</h4>
                     <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest mb-4">{d.serviceUnit} • {d.subLocation}</p>
@@ -1002,18 +1304,20 @@ function App() {
                       <p className="text-sm font-bold">Belum Ada Foto</p>
                     </div>
                   )}
-                  <label className="absolute bottom-8 left-8 right-8 bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl cursor-pointer flex items-center justify-center gap-3 font-bold transition-all">
-                    <Upload className="w-5 h-5" />
-                    <span>Upload Foto</span>
-                    <input type="file" className="hidden" accept="image/*" onChange={(e) => handlePhotoUpload(selectedDevice.id, e)} />
-                  </label>
+                  {isAdmin && (
+                    <label className="absolute bottom-8 left-8 right-8 bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl cursor-pointer flex items-center justify-center gap-3 font-bold transition-all">
+                      <Upload className="w-5 h-5" />
+                      <span>Upload Foto</span>
+                      <input type="file" className="hidden" accept="image/*" onChange={(e) => handlePhotoUpload(selectedDevice.id, e)} />
+                    </label>
+                  )}
                 </div>
                 <div className="w-full lg:w-1/2 p-12 overflow-y-auto max-h-[80vh]">
                   <div className="mb-8">
                     <h3 className="text-3xl font-black text-slate-900 text-center">
                       {isEditing ? 'Edit Perangkat' : selectedDevice.name}
                     </h3>
-                    {!isEditing && (
+                    {!isEditing && isAdmin && (
                       <div className="mt-5 flex justify-center">
                         <button
                           onClick={() => {
@@ -1489,6 +1793,115 @@ function App() {
                     </div>
                   );
                 })()}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isManageLoginOpen && isAdmin && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[3rem] w-full max-w-2xl overflow-hidden shadow-2xl relative"
+            >
+              <button onClick={() => setIsManageLoginOpen(false)} className="absolute top-8 right-8 p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl z-20">
+                <XCircle className="w-6 h-6 text-slate-400" />
+              </button>
+
+              <div className="p-8 md:p-10">
+                <div className="mb-7">
+                  <h3 className="text-xl font-black text-slate-900">Manajemen Login</h3>
+                  <p className="text-xs text-slate-500 font-bold mt-1">Hanya dapat diakses oleh Super Admin.</p>
+                </div>
+
+                <div className="space-y-5">
+                  <div className="border border-slate-100 rounded-3xl p-5">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Verifikasi</p>
+                    <p className="text-xs font-black text-slate-900 mt-1">Password Super Admin saat ini</p>
+                    <div className="mt-4">
+                      <input
+                        type="password"
+                        value={manageLoginForm.currentAdminPassword}
+                        onChange={(e) => setManageLoginForm(prev => ({ ...prev, currentAdminPassword: e.target.value }))}
+                        className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                        placeholder="Masukkan password saat ini"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="border border-slate-100 rounded-3xl p-5">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ubah Password</p>
+                    <p className="text-xs font-black text-slate-900 mt-1">Super Admin (admin)</p>
+                    <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <input
+                        type="password"
+                        value={manageLoginForm.newAdminPassword}
+                        onChange={(e) => setManageLoginForm(prev => ({ ...prev, newAdminPassword: e.target.value }))}
+                        className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                        placeholder="Password baru"
+                      />
+                      <input
+                        type="password"
+                        value={manageLoginForm.confirmAdminPassword}
+                        onChange={(e) => setManageLoginForm(prev => ({ ...prev, confirmAdminPassword: e.target.value }))}
+                        className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                        placeholder="Konfirmasi password"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="border border-slate-100 rounded-3xl p-5">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ubah Password</p>
+                    <p className="text-xs font-black text-slate-900 mt-1">User (user)</p>
+                    <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <input
+                        type="password"
+                        value={manageLoginForm.newUserPassword}
+                        onChange={(e) => setManageLoginForm(prev => ({ ...prev, newUserPassword: e.target.value }))}
+                        className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                        placeholder="Password baru"
+                      />
+                      <input
+                        type="password"
+                        value={manageLoginForm.confirmUserPassword}
+                        onChange={(e) => setManageLoginForm(prev => ({ ...prev, confirmUserPassword: e.target.value }))}
+                        className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                        placeholder="Konfirmasi password"
+                      />
+                    </div>
+                  </div>
+
+                  {manageLoginError && (
+                    <div className="px-4 py-3 bg-rose-50 border border-rose-100 rounded-2xl text-rose-700 text-xs font-bold">
+                      {manageLoginError}
+                    </div>
+                  )}
+
+                  {manageLoginSuccess && (
+                    <div className="px-4 py-3 bg-emerald-50 border border-emerald-100 rounded-2xl text-emerald-700 text-xs font-bold">
+                      {manageLoginSuccess}
+                    </div>
+                  )}
+
+                  <div className="flex gap-4 pt-2">
+                    <button
+                      onClick={saveManageLogin}
+                      className="flex-grow bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl font-black transition-all shadow-lg shadow-blue-200"
+                    >
+                      Simpan Perubahan
+                    </button>
+                    <button
+                      onClick={() => setIsManageLoginOpen(false)}
+                      className="px-8 bg-slate-100 hover:bg-slate-200 text-slate-700 py-4 rounded-2xl font-black transition-all"
+                    >
+                      Tutup
+                    </button>
+                  </div>
+                </div>
               </div>
             </motion.div>
           </div>
