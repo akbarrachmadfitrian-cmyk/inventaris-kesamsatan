@@ -19,20 +19,26 @@ export default defineConfig({
         theme_color: '#1E293B',
         icons: [
           {
-            src: '/bapenda-kalsel.svg',
-            sizes: 'any',
-            type: 'image/svg+xml',
+            src: '/pwa-192.png',
+            sizes: '192x192',
+            type: 'image/png',
             purpose: 'any'
           },
           {
-            src: '/bapenda-kalsel.svg',
-            sizes: 'any',
-            type: 'image/svg+xml',
+            src: '/pwa-512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'any'
+          },
+          {
+            src: '/pwa-512.png',
+            sizes: '512x512',
+            type: 'image/png',
             purpose: 'maskable'
           }
         ]
       },
-      includeAssets: ['bapenda-kalsel.svg'],
+      includeAssets: ['bapenda-kalsel.svg', 'pwa-192.png', 'pwa-512.png', 'apple-touch-icon.png'],
       workbox: {
         navigateFallback: '/index.html',
         globPatterns: ['**/*.{js,css,html,svg,png,ico}']
