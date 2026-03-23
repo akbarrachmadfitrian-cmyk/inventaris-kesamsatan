@@ -380,8 +380,9 @@ function App() {
       <aside className="w-72 bg-white border-r border-slate-200 flex flex-col z-40 shrink-0">
         <div className="p-6 flex flex-col items-center gap-3 border-b border-slate-50">
           <img
-            src="https://bapenda.kalselprov.go.id/wp-content/uploads/2025/08/Logo-Sayembara-Bapenda.png"
+            src="https://bapenda.kalselprov.go.id/wp-content/uploads/2025/08/Logo-Sayembara-Bapenda.png?v=20250823"
             alt="Bapenda Kalimantan Selatan"
+            referrerPolicy="no-referrer"
             className="h-12 w-auto object-contain"
           />
           <div className="text-center">
