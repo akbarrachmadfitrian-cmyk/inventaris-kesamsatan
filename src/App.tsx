@@ -381,9 +381,10 @@ function App() {
   const [editForm, setEditForm] = useState<Partial<Device>>({});
   
   // Dashboard Navigation State
-  const [viewMode, setViewMode] = useState<'selection' | 'dashboard' | 'devices'>('selection');
+  const [viewMode, setViewMode] = useState<'selection' | 'dashboard' | 'devices' | 'scan-qr'>('selection');
   const [activeSamsat, setActiveSamsat] = useState<string | null>(null);
   const [showSamsatDropdown, setShowSamsatDropdown] = useState(false);
+  const [isLayananModalOpen, setIsLayananModalOpen] = useState(false);
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
   const [requestDraft, setRequestDraft] = useState<DeviceRequest | null>(null);
   const [newDeviceDraft, setNewDeviceDraft] = useState<Partial<Device>>({
@@ -1151,6 +1152,16 @@ function App() {
     };
   }, [currentSamsatDevices]);
 
+  const groupedLayanan = useMemo(() => {
+    const groups: Record<string, Device[]> = {};
+    currentSamsatDevices.forEach(d => {
+      const layanan = d.serviceUnit || 'Lainnya';
+      if (!groups[layanan]) groups[layanan] = [];
+      groups[layanan].push(d);
+    });
+    return groups;
+  }, [currentSamsatDevices]);
+
   const attentionDevices = useMemo(() => 
     currentSamsatDevices.filter(d => normalizeCondition(d.condition) !== 'Baik').slice(0, 5),
   [currentSamsatDevices]);
@@ -1192,6 +1203,61 @@ function App() {
 
     return () => window.clearInterval(t);
   }, [session, refreshUnreadInboxCount]);
+
+  const renderScanQR = () => {
+    return (
+      <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm min-h-[400px]">
+        <div className="flex items-center gap-3 mb-8">
+          <QrCode className="w-6 h-6 text-blue-600" />
+          <h3 className="text-xl font-black text-slate-900">Scan QR Code Perangkat</h3>
+        </div>
+        <p className="text-sm text-slate-500 font-bold mb-6">Arahkan kamera ke QR Code pada perangkat untuk melihat detailnya secara otomatis.</p>
+        <div id="qr-reader" className="w-full max-w-lg mx-auto rounded-3xl overflow-hidden border-2 border-slate-100 bg-slate-50"></div>
+      </div>
+    );
+  };
+
+  useEffect(() => {
+    let html5QrcodeScanner: any = null;
+    if (viewMode === 'scan-qr' && isAdmin) {
+      import('html5-qrcode').then(({ Html5QrcodeScanner }) => {
+        html5QrcodeScanner = new Html5QrcodeScanner(
+          "qr-reader",
+          { fps: 10, qrbox: { width: 250, height: 250 } },
+          /* verbose= */ false
+        );
+        html5QrcodeScanner.render((decodedText: string) => {
+          try {
+            const data = JSON.parse(decodedText);
+            if (data.id) {
+              const device = devices.find(d => d.id === data.id);
+              if (device) {
+                html5QrcodeScanner.clear();
+                if (device.samsat !== activeSamsat) {
+                  setActiveSamsat(device.samsat);
+                }
+                setSelectedDevice(device);
+                setIsEditing(false);
+                setViewMode('devices');
+              } else {
+                window.alert('Perangkat tidak ditemukan di database.');
+              }
+            }
+          } catch (e) {
+            window.alert('QR Code tidak valid.');
+          }
+        }, (err: any) => {
+          // ignore error
+        });
+      });
+    }
+
+    return () => {
+      if (html5QrcodeScanner) {
+        html5QrcodeScanner.clear().catch(console.error);
+      }
+    };
+  }, [viewMode, isAdmin, devices, activeSamsat]);
 
   if (!session) {
     return (
@@ -1384,6 +1450,17 @@ function App() {
                 <Monitor className="w-5 h-5" />
                 <span>Daftar Perangkat</span>
               </button>
+              {isAdmin && (
+                <button 
+                  onClick={() => setViewMode('scan-qr')}
+                  className={`w-full flex items-center gap-3 p-3 rounded-xl font-bold text-sm transition-all ${
+                    viewMode === 'scan-qr' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'text-slate-500 hover:bg-slate-50'
+                  }`}
+                >
+                  <QrCode className="w-5 h-5" />
+                  <span>Scan QR</span>
+                </button>
+              )}
               {isAdmin && !strictSheetSync && (
                 <button
                   onClick={openRequestModal}
@@ -1429,10 +1506,10 @@ function App() {
       <main className="flex-grow overflow-y-auto">
         <header className="p-8 pb-4">
           <h2 className="text-2xl font-black text-slate-900 mb-1">
-            {viewMode === 'selection' ? 'Daftar Kantor Samsat' : 'Dashboard'}
+            {viewMode === 'selection' ? 'Daftar Kantor Samsat' : viewMode === 'scan-qr' ? 'Scan QR' : 'Dashboard'}
           </h2>
           <p className="text-sm text-slate-500 font-medium">
-            {viewMode === 'selection' ? 'Pilih kantor untuk melihat data inventaris' : `Ringkasan inventaris — ${activeSamsat}`}
+            {viewMode === 'selection' ? 'Pilih kantor untuk melihat data inventaris' : viewMode === 'scan-qr' ? 'Pindai QR code untuk melihat detail perangkat' : `Ringkasan inventaris — ${activeSamsat}`}
           </p>
         </header>
 
@@ -1481,6 +1558,8 @@ function App() {
                 </div>
               )}
             </div>
+          ) : viewMode === 'scan-qr' && isAdmin ? (
+            renderScanQR()
           ) : viewMode === 'dashboard' ? (
             <>
               <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
@@ -1489,9 +1568,13 @@ function App() {
                   { label: 'Kondisi Baik', value: stats.baik, icon: <CheckCircle2 className="w-6 h-6" />, color: 'text-emerald-600', bg: 'bg-emerald-50' },
                   { label: 'Kurang Baik', value: stats.kurangBaik, icon: <AlertTriangle className="w-6 h-6" />, color: 'text-amber-600', bg: 'bg-amber-50' },
                   { label: 'Rusak / Tidak Baik', value: stats.rusak, icon: <XCircle className="w-6 h-6" />, color: 'text-rose-600', bg: 'bg-rose-50' },
-                  { label: 'Jenis Layanan', value: stats.layanan, icon: <Layers className="w-6 h-6" />, color: 'text-purple-600', bg: 'bg-purple-50' },
+                  { label: 'Jenis Layanan', value: stats.layanan, icon: <Layers className="w-6 h-6" />, color: 'text-purple-600', bg: 'bg-purple-50', onClick: () => setIsLayananModalOpen(true) },
                 ].map((stat, i) => (
-                  <motion.div key={i} className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm flex flex-col items-start gap-4">
+                  <motion.div 
+                    key={i} 
+                    onClick={stat.onClick}
+                    className={`bg-white p-6 rounded-3xl border border-slate-100 shadow-sm flex flex-col items-start gap-4 ${stat.onClick ? 'cursor-pointer hover:border-purple-300 hover:shadow-md transition-all' : ''}`}
+                  >
                     <div className={`p-3 ${stat.bg} ${stat.color} rounded-2xl`}>{stat.icon}</div>
                     <div>
                       <p className="text-3xl font-black text-slate-900">{stat.value}</p>
@@ -1821,6 +1904,57 @@ function App() {
                     </>
                   )}
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isLayananModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-[3rem] w-full max-w-5xl max-h-[calc(100vh-2rem)] overflow-hidden shadow-2xl relative flex flex-col">
+              <div className="p-8 border-b border-slate-100 flex items-center justify-between shrink-0">
+                <div>
+                  <h3 className="text-2xl font-black text-slate-900">Daftar Perangkat per Jenis Layanan</h3>
+                  <p className="text-sm font-bold text-slate-500 mt-1">{activeSamsat}</p>
+                </div>
+                <button onClick={() => setIsLayananModalOpen(false)} className="p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl transition-colors">
+                  <XCircle className="w-6 h-6 text-slate-400" />
+                </button>
+              </div>
+              <div className="p-8 overflow-y-auto flex-grow space-y-8">
+                {Object.entries(groupedLayanan).map(([layanan, devs]) => (
+                  <div key={layanan} className="border border-slate-200 rounded-3xl overflow-hidden">
+                    <div className="bg-slate-50 p-4 border-b border-slate-200 flex items-center justify-between">
+                      <h4 className="text-lg font-black text-slate-900">{layanan}</h4>
+                      <span className="px-3 py-1 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600">
+                        {devs.length} Perangkat
+                      </span>
+                    </div>
+                    <div className="divide-y divide-slate-100">
+                      {devs.map((d, i) => (
+                        <div key={i} className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-slate-50 transition-colors">
+                          <div>
+                            <p className="font-black text-slate-900">{d.name}</p>
+                            <p className="text-xs font-bold text-slate-500 mt-1 uppercase tracking-widest">{d.serialNumber}</p>
+                          </div>
+                          <div className="flex flex-col md:items-end gap-1 text-sm font-bold">
+                            <p className="text-slate-600">User: <span className="text-slate-900">{d.subLocation || '-'}</span></p>
+                            <p className="text-slate-600">No HP: <span className="text-slate-900">{d.phoneNumber || '-'}</span></p>
+                            <span className={`text-[10px] font-black px-2 py-1 rounded-lg uppercase tracking-widest inline-block w-max ${
+                              normalizeCondition(d.condition) === 'Baik' ? 'bg-emerald-100 text-emerald-700' : 
+                              normalizeCondition(d.condition) === 'Kurang Baik' ? 'bg-amber-100 text-amber-700' : 
+                              'bg-rose-100 text-rose-600'
+                            }`}>
+                              {normalizeCondition(d.condition)}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
             </motion.div>
           </div>
