@@ -290,39 +290,6 @@ const parseSheetCSV = (csvData: string, defaultSamsat: string): Device[] => {
   return sheetDevices;
 };
 
-const generateMockData = (): Device[] => {
-  const samsats = ["SAMSAT Banjarmasin I", "SAMSAT Banjarmasin II", "SAMSAT Banjarbaru", "SAMSAT Martapura"];
-  const services = ["KASIR", "PELAYANAN INDUK", "DRIVE THRU", "SAMSAT KELILING"];
-  const names = ["PC LENOVO", "PRINTER HP", "SCANNER CANON", "UPS APC"];
-  const staff = ["POPY", "SOPHIE", "DEA", "AHMAD", "BUDI"];
-
-  const mock: Device[] = [];
-  samsats.forEach(s => {
-    services.forEach(serv => {
-      const count = 5;
-      for (let i = 0; i < count; i++) {
-        const name = names[Math.floor(Math.random() * names.length)];
-        mock.push({
-          id: `MOCK-${s.replace(/\s+/g, '-')}-${serv}-${i}`,
-          name: name,
-          category: name.split(' ')[0],
-          location: serv,
-          subLocation: staff[Math.floor(Math.random() * staff.length)],
-          serialNumber: `SN-MOCK-${Math.random().toString(36).toUpperCase().slice(2, 6)}`,
-          phoneNumber: Math.random() > 0.25 ? `08${Math.floor(100000000 + Math.random() * 900000000)}` : '???',
-          condition: Math.random() > 0.8 ? "Kurang Baik" : "Baik",
-          isComplete: false,
-          dataComplete: Math.random() > 0.3,
-          samsat: s,
-          serviceUnit: serv,
-          sheetName: "Mock Data"
-        });
-      }
-    });
-  });
-  return mock;
-};
-
 function App() {
   const [session, setSession] = useState<AuthSession | null>(() => loadAuthSession());
   const [authTab, setAuthTab] = useState<AuthRole>('admin');
@@ -360,6 +327,7 @@ function App() {
   });
 
   const isAdmin = session?.role === 'admin';
+  const strictSheetSync = true;
 
   const handleLogin = (role: AuthRole) => {
     const creds = getAuthCredentials();
@@ -466,6 +434,7 @@ function App() {
   };
 
   const openRequestModal = () => {
+    if (strictSheetSync) return;
     if (!isAdmin) return;
     if (!activeSamsat) return;
     const requests = loadDeviceRequests();
@@ -481,6 +450,7 @@ function App() {
   };
 
   const persistRequestDraft = (next: DeviceRequest) => {
+    if (strictSheetSync) return;
     if (!isAdmin) return;
     const requests = loadDeviceRequests();
     requests[next.samsat] = next;
@@ -489,6 +459,7 @@ function App() {
   };
 
   const deleteDevice = (device: Device) => {
+    if (strictSheetSync) return;
     if (!isAdmin) {
       window.alert('Akses terbatas. Hanya Super Admin yang dapat menghapus perangkat.');
       return;
@@ -539,6 +510,7 @@ function App() {
   };
 
   const addRequestedDevice = () => {
+    if (strictSheetSync) return;
     if (!isAdmin) return;
     if (!requestDraft || !activeSamsat) return;
     const approvedCount = getApprovedCount(requestDraft);
@@ -599,6 +571,7 @@ function App() {
   };
 
   const handleLetterUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (strictSheetSync) return;
     if (!isAdmin) return;
     if (!requestDraft) return;
     const file = e.target.files?.[0];
@@ -623,7 +596,9 @@ function App() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const sheets = [
+      const baseUrl = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRqd9Fuc8MRfwWgzB5TJ-8trqSCerRy5-mbzhy-wJo_faoLLe9JItOxyKXBJ2A9l8MpFoswgpTxfxN1/pub?output=csv&gid=';
+      
+      const fallbackSheets = [
         { name: "SAMSAT BANJARMASIN I", gid: "0" },
         { name: "SAMSAT BANJARMASIN II", gid: "1710409913" },
         { name: "SAMSAT BANJARBARU", gid: "11591526" },
@@ -640,8 +615,37 @@ function App() {
         { name: "SAMSAT KOTABARU", gid: "1643121233" }
       ];
 
-      const baseUrl = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRqd9Fuc8MRfwWgzB5TJ-8trqSCerRy5-mbzhy-wJo_faoLLe9JItOxyKXBJ2A9l8MpFoswgpTxfxN1/pub?output=csv&gid=';
-      
+      const discoverSheets = async () => {
+        try {
+          const response = await axios.get('/api/sheets?format=html', { timeout: 8000 });
+          const html = String(response.data || '');
+          if (!html) return fallbackSheets;
+
+          const doc = new DOMParser().parseFromString(html, 'text/html');
+          const anchors = Array.from(doc.querySelectorAll('a'));
+          const byGid = new Map<string, { gid: string; name: string }>();
+
+          anchors.forEach(a => {
+            const href = a.getAttribute('href') || '';
+            const m = href.match(/[?&]gid=(\d+)/);
+            if (!m) return;
+            const gid = m[1];
+            const text = (a.textContent || '').trim();
+            const name = text || `GID ${gid}`;
+            const existing = byGid.get(gid);
+            if (!existing || name.length > existing.name.length) {
+              byGid.set(gid, { gid, name });
+            }
+          });
+
+          const discovered = Array.from(byGid.values());
+          return discovered.length > 0 ? discovered : fallbackSheets;
+        } catch {
+          return fallbackSheets;
+        }
+      };
+
+      const sheets = await discoverSheets();
       const allFetchedDevices: Device[] = [];
 
       // Fetch all sheets in parallel
@@ -675,25 +679,18 @@ function App() {
       await Promise.all(fetchPromises);
 
       if (allFetchedDevices.length > 0) {
-        const savedPhotos = JSON.parse(localStorage.getItem('samsat_device_photos') || '{}');
-        const updatedDevices = JSON.parse(localStorage.getItem('samsat_updated_devices') || '{}');
-        const deletedIds = new Set(loadDeletedDeviceIds());
-        const addedDevices = loadAddedDevices().filter(d => d && d.id && !deletedIds.has(d.id));
-        
-        const finalDevices = allFetchedDevices.map(d => {
-          // Terapkan update dari local storage jika ada
-          const localUpdate = updatedDevices[d.id];
-          const baseDevice = localUpdate ? { ...d, ...localUpdate } : d;
-          
-          return {
-            ...baseDevice,
-            photo: savedPhotos[d.id] || baseDevice.photo,
-            isComplete: !!(savedPhotos[d.id] || baseDevice.photo)
-          };
-        }).filter(d => !deletedIds.has(d.id));
+        const savedPhotos = safeParseJSON<Record<string, string>>(localStorage.getItem('samsat_device_photos'), {});
 
-        const merged = [...addedDevices, ...finalDevices];
-        setDevices(merged);
+        const finalDevices = allFetchedDevices.map(d => {
+          const photo = savedPhotos[d.id] || d.photo;
+          return {
+            ...d,
+            photo,
+            isComplete: !!photo
+          };
+        });
+
+        setDevices(finalDevices);
       }
       
     } catch (err) {
@@ -704,9 +701,6 @@ function App() {
   }, []);
 
   useEffect(() => {
-    // Muat mock data segera agar UI tidak kosong
-    setDevices(generateMockData());
-    // Kemudian coba ambil data asli
     fetchData();
   }, [fetchData]);
 
@@ -732,6 +726,7 @@ function App() {
   };
 
   const handleUpdateDevice = () => {
+    if (strictSheetSync) return;
     if (!isAdmin) return;
     if (!selectedDevice || !editForm.id) return;
     
@@ -1025,7 +1020,7 @@ function App() {
                 <Monitor className="w-5 h-5" />
                 <span>Daftar Perangkat</span>
               </button>
-              {isAdmin && (
+              {isAdmin && !strictSheetSync && (
                 <button
                   onClick={openRequestModal}
                   className="w-full flex items-center gap-3 p-3 rounded-xl font-bold text-sm transition-all text-slate-500 hover:bg-slate-50"
@@ -1234,7 +1229,7 @@ function App() {
                   />
                 </div>
                 {activeSamsat && (
-                  isAdmin ? (
+                  isAdmin && !strictSheetSync ? (
                     <button
                       onClick={openRequestModal}
                       className="px-5 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black transition-all shadow-lg shadow-blue-200 flex items-center gap-2"
@@ -1260,7 +1255,7 @@ function App() {
                       <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-400 group-hover:text-blue-600 transition-all">
                         {d.category.toLowerCase().includes('printer') ? <Printer className="w-6 h-6" /> : <Monitor className="w-6 h-6" />}
                       </div>
-                      {isAdmin && (
+                      {isAdmin && !strictSheetSync && (
                         <button
                           onClick={(e) => { e.stopPropagation(); deleteDevice(d); }}
                           className="p-2 rounded-xl hover:bg-rose-50 text-rose-600 transition-colors"
@@ -1317,7 +1312,7 @@ function App() {
                     <h3 className="text-3xl font-black text-slate-900 text-center">
                       {isEditing ? 'Edit Perangkat' : selectedDevice.name}
                     </h3>
-                    {!isEditing && isAdmin && (
+                    {!isEditing && isAdmin && !strictSheetSync && (
                       <div className="mt-5 flex justify-center">
                         <button
                           onClick={() => {
