@@ -6,7 +6,7 @@ import {
   Monitor, Printer, LayoutDashboard, ChevronRight,
   Building2, Layers, XCircle, AlertTriangle,
   Trash2, Plus, FileUp, Clock3,
-  ChevronDown, List, KeyRound
+  ChevronDown, List, KeyRound, Inbox, Send
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -67,6 +67,46 @@ interface DeviceRequest {
 const LS_DELETED_DEVICE_IDS = 'samsat_deleted_device_ids';
 const LS_ADDED_DEVICES = 'samsat_added_devices';
 const LS_DEVICE_REQUESTS = 'samsat_device_requests';
+const LS_INBOX_MESSAGES = 'samsat_inbox_messages';
+
+type InboxKind = 'damage_report' | 'device_request';
+type InboxStatus = 'unread' | 'read';
+
+interface InboxAttachment {
+  fileName: string;
+  mimeType: string;
+  dataUrl: string;
+  uploadedAt: string;
+}
+
+interface DamageReportPayload {
+  kerusakanPerangkat: string;
+  layananRusak: string;
+  jenisMerkSnPerangkatRusak: string;
+  namaDanKontakPengguna: string;
+  perbaikanMandiri: 'Sudah' | 'Belum';
+  kwitansiBuktiPerbaikan: InboxAttachment | null;
+  fotoPerangkatRusak: InboxAttachment | null;
+}
+
+interface DeviceRequestSubmissionPayload {
+  suratPermintaan: InboxAttachment | null;
+  untukLayanan: string;
+  kebutuhanPerangkat: 'PC KESAMSATAN' | 'PRINTER KESAMSATAN' | 'PC & PRINTER KESAMSATAN';
+  jumlahPermintaan: number | null;
+  jumlahPermintaanPC: number | null;
+  jumlahPermintaanPrinter: number | null;
+  alasanPermintaan: string;
+}
+
+interface InboxMessage {
+  id: string;
+  kind: InboxKind;
+  status: InboxStatus;
+  samsat: string;
+  createdAt: string;
+  payload: DamageReportPayload | DeviceRequestSubmissionPayload;
+}
 
 type AuthRole = 'admin' | 'user';
 
@@ -91,6 +131,30 @@ const safeParseJSON = <T,>(raw: string | null, fallback: T): T => {
   } catch {
     return fallback;
   }
+};
+
+const loadInboxMessages = () => safeParseJSON<InboxMessage[]>(localStorage.getItem(LS_INBOX_MESSAGES), []);
+const saveInboxMessages = (messages: InboxMessage[]) => localStorage.setItem(LS_INBOX_MESSAGES, JSON.stringify(messages));
+
+const readFileAsAttachment = (file: File): Promise<InboxAttachment> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('File read failed'));
+    reader.onloadend = () => {
+      resolve({
+        fileName: file.name,
+        mimeType: file.type || 'application/octet-stream',
+        dataUrl: String(reader.result || ''),
+        uploadedAt: new Date().toISOString()
+      });
+    };
+    reader.readAsDataURL(file);
+  });
+};
+
+const createLocalId = () => {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
+  return `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 };
 
 const getAuthCredentials = (): AuthCredentials => {
@@ -326,6 +390,55 @@ function App() {
     condition: 'Baik'
   });
 
+  const [isInboxOpen, setIsInboxOpen] = useState(false);
+  const [inboxTab, setInboxTab] = useState<InboxKind>('damage_report');
+  const [inboxLoading, setInboxLoading] = useState(false);
+  const [inboxItems, setInboxItems] = useState<InboxMessage[]>([]);
+  const [unreadInboxCount, setUnreadInboxCount] = useState(0);
+  const [activeInboxMessage, setActiveInboxMessage] = useState<InboxMessage | null>(null);
+
+  const [isDamageReportOpen, setIsDamageReportOpen] = useState(false);
+  const [damageSending, setDamageSending] = useState(false);
+  const [damageSuccess, setDamageSuccess] = useState<string | null>(null);
+  const [damageDraft, setDamageDraft] = useState<{
+    kerusakanPerangkat: string;
+    layananRusak: string;
+    jenisMerkSnPerangkatRusak: string;
+    namaDanKontakPengguna: string;
+    perbaikanMandiri: 'Sudah' | 'Belum';
+    kwitansiFile: File | null;
+    fotoRusakFile: File | null;
+  }>({
+    kerusakanPerangkat: '',
+    layananRusak: '',
+    jenisMerkSnPerangkatRusak: '',
+    namaDanKontakPengguna: '',
+    perbaikanMandiri: 'Belum',
+    kwitansiFile: null,
+    fotoRusakFile: null
+  });
+
+  const [isDeviceRequestOpen, setIsDeviceRequestOpen] = useState(false);
+  const [deviceRequestSending, setDeviceRequestSending] = useState(false);
+  const [deviceRequestSuccess, setDeviceRequestSuccess] = useState<string | null>(null);
+  const [deviceRequestDraft, setDeviceRequestDraft] = useState<{
+    suratFile: File | null;
+    untukLayanan: string;
+    kebutuhanPerangkat: 'PC KESAMSATAN' | 'PRINTER KESAMSATAN' | 'PC & PRINTER KESAMSATAN';
+    jumlahPermintaan: number | null;
+    jumlahPermintaanPC: number | null;
+    jumlahPermintaanPrinter: number | null;
+    alasanPermintaan: string;
+  }>({
+    suratFile: null,
+    untukLayanan: '',
+    kebutuhanPerangkat: 'PC KESAMSATAN',
+    jumlahPermintaan: null,
+    jumlahPermintaanPC: null,
+    jumlahPermintaanPrinter: null,
+    alasanPermintaan: ''
+  });
+
   const isAdmin = session?.role === 'admin';
   const strictSheetSync = true;
 
@@ -371,6 +484,227 @@ function App() {
     setIsRequestModalOpen(false);
     setRequestDraft(null);
     setIsManageLoginOpen(false);
+  };
+
+  const fetchInboxItems = async (kind: InboxKind, status: 'all' | InboxStatus = 'all') => {
+    setInboxLoading(true);
+    try {
+      try {
+        const response = await axios.get('/api/inbox', {
+          params: { kind, status, limit: 200 },
+          timeout: 8000
+        });
+        const items = (response.data?.items || []) as InboxMessage[];
+        setInboxItems(items);
+        return items;
+      } catch {
+        const items = loadInboxMessages()
+          .filter(m => (status === 'all' ? true : m.status === status) && m.kind === kind)
+          .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+        setInboxItems(items);
+        return items;
+      }
+    } finally {
+      setInboxLoading(false);
+    }
+  };
+
+  const refreshUnreadInboxCount = useCallback(async () => {
+    if (!session || session.role !== 'admin') return;
+    try {
+      try {
+        const response = await axios.get('/api/inbox', {
+          params: { status: 'unread', limit: 200 },
+          timeout: 8000
+        });
+        const items = (response.data?.items || []) as InboxMessage[];
+        setUnreadInboxCount(items.length);
+      } catch {
+        setUnreadInboxCount(loadInboxMessages().filter(m => m.status === 'unread').length);
+      }
+    } catch {
+      setUnreadInboxCount(loadInboxMessages().filter(m => m.status === 'unread').length);
+    }
+  }, [session]);
+
+  const markInboxRead = async (ids: string[]) => {
+    if (!ids.length) return;
+    try {
+      await axios.post('/api/inbox', { action: 'markRead', ids }, { timeout: 8000 });
+    } catch {
+      const next = loadInboxMessages().map(m => (ids.includes(m.id) ? { ...m, status: 'read' as InboxStatus } : m));
+      saveInboxMessages(next);
+    }
+    refreshUnreadInboxCount();
+  };
+
+  const openInbox = async () => {
+    setDamageSuccess(null);
+    setDeviceRequestSuccess(null);
+    setActiveInboxMessage(null);
+    setInboxTab('damage_report');
+    setIsInboxOpen(true);
+    await fetchInboxItems('damage_report', 'all');
+    refreshUnreadInboxCount();
+  };
+
+  const openInboxMessage = async (msg: InboxMessage) => {
+    setActiveInboxMessage(msg);
+    if (msg.status === 'unread') {
+      await markInboxRead([msg.id]);
+      setInboxItems(prev => prev.map(m => (m.id === msg.id ? { ...m, status: 'read' } : m)));
+    }
+  };
+
+  const sendInboxMessage = async (kind: InboxKind, payload: DamageReportPayload | DeviceRequestSubmissionPayload) => {
+    if (!activeSamsat) throw new Error('Samsat belum dipilih');
+
+    try {
+      const response = await axios.post(
+        '/api/inbox',
+        { action: 'create', kind, samsat: activeSamsat, payload },
+        { timeout: 8000 }
+      );
+      return String(response.data?.id || '');
+    } catch {
+      const id = createLocalId();
+      const message: InboxMessage = {
+        id,
+        kind,
+        status: 'unread',
+        samsat: activeSamsat,
+        createdAt: new Date().toISOString(),
+        payload
+      };
+      const next = [message, ...loadInboxMessages()];
+      saveInboxMessages(next);
+      return id;
+    }
+  };
+
+  const submitDamageReport = async () => {
+    if (!activeSamsat) {
+      window.alert('Pilih kantor Samsat terlebih dahulu.');
+      return;
+    }
+    if (!damageDraft.kerusakanPerangkat.trim()) {
+      window.alert('Kolom "Kerusakan Perangkat" wajib diisi.');
+      return;
+    }
+    if (!damageDraft.layananRusak.trim()) {
+      window.alert('Kolom "Layanan yang Rusak" wajib diisi.');
+      return;
+    }
+    if (!damageDraft.jenisMerkSnPerangkatRusak.trim()) {
+      window.alert('Kolom "Jenis/Merk/SN Perangkat Rusak" wajib diisi.');
+      return;
+    }
+    if (!damageDraft.namaDanKontakPengguna.trim()) {
+      window.alert('Kolom "Nama dan Kontak Pengguna" wajib diisi.');
+      return;
+    }
+    if (!damageDraft.fotoRusakFile) {
+      window.alert('Upload foto perangkat rusak wajib diisi.');
+      return;
+    }
+
+    setDamageSending(true);
+    try {
+      const foto = await readFileAsAttachment(damageDraft.fotoRusakFile);
+      const kwitansi =
+        damageDraft.perbaikanMandiri === 'Sudah' && damageDraft.kwitansiFile ? await readFileAsAttachment(damageDraft.kwitansiFile) : null;
+
+      const payload: DamageReportPayload = {
+        kerusakanPerangkat: damageDraft.kerusakanPerangkat.trim(),
+        layananRusak: damageDraft.layananRusak.trim(),
+        jenisMerkSnPerangkatRusak: damageDraft.jenisMerkSnPerangkatRusak.trim(),
+        namaDanKontakPengguna: damageDraft.namaDanKontakPengguna.trim(),
+        perbaikanMandiri: damageDraft.perbaikanMandiri,
+        kwitansiBuktiPerbaikan: kwitansi,
+        fotoPerangkatRusak: foto
+      };
+
+      await sendInboxMessage('damage_report', payload);
+      setDamageSuccess('Laporan Anda sudah dikirim');
+      setDamageDraft({
+        kerusakanPerangkat: '',
+        layananRusak: '',
+        jenisMerkSnPerangkatRusak: '',
+        namaDanKontakPengguna: '',
+        perbaikanMandiri: 'Belum',
+        kwitansiFile: null,
+        fotoRusakFile: null
+      });
+      refreshUnreadInboxCount();
+    } finally {
+      setDamageSending(false);
+    }
+  };
+
+  const submitDeviceRequest = async () => {
+    if (!activeSamsat) {
+      window.alert('Pilih kantor Samsat terlebih dahulu.');
+      return;
+    }
+    if (!deviceRequestDraft.suratFile) {
+      window.alert('Upload surat permintaan perangkat wajib diisi.');
+      return;
+    }
+    if (!deviceRequestDraft.untukLayanan.trim()) {
+      window.alert('Kolom "UNTUK LAYANAN" wajib diisi.');
+      return;
+    }
+    if (!deviceRequestDraft.alasanPermintaan.trim()) {
+      window.alert('Kolom "ALASAN PERMINTAAN PERANGKAT" wajib diisi.');
+      return;
+    }
+
+    const kebutuhan = deviceRequestDraft.kebutuhanPerangkat;
+    const pc = Math.max(0, Number(deviceRequestDraft.jumlahPermintaanPC || 0));
+    const printer = Math.max(0, Number(deviceRequestDraft.jumlahPermintaanPrinter || 0));
+    const total = Math.max(0, Number(deviceRequestDraft.jumlahPermintaan || 0));
+
+    if (kebutuhan === 'PC & PRINTER KESAMSATAN') {
+      if (pc <= 0 && printer <= 0) {
+        window.alert('Isi jumlah permintaan PC dan/atau PRINTER.');
+        return;
+      }
+    } else {
+      if (total <= 0) {
+        window.alert('Isi jumlah permintaan perangkat.');
+        return;
+      }
+    }
+
+    setDeviceRequestSending(true);
+    try {
+      const surat = await readFileAsAttachment(deviceRequestDraft.suratFile);
+
+      const payload: DeviceRequestSubmissionPayload = {
+        suratPermintaan: surat,
+        untukLayanan: deviceRequestDraft.untukLayanan.trim(),
+        kebutuhanPerangkat: deviceRequestDraft.kebutuhanPerangkat,
+        jumlahPermintaan: kebutuhan === 'PC & PRINTER KESAMSATAN' ? null : total,
+        jumlahPermintaanPC: kebutuhan === 'PC & PRINTER KESAMSATAN' ? pc : null,
+        jumlahPermintaanPrinter: kebutuhan === 'PC & PRINTER KESAMSATAN' ? printer : null,
+        alasanPermintaan: deviceRequestDraft.alasanPermintaan.trim()
+      };
+
+      await sendInboxMessage('device_request', payload);
+      setDeviceRequestSuccess('Permintaan Anda sudah dikirim');
+      setDeviceRequestDraft({
+        suratFile: null,
+        untukLayanan: '',
+        kebutuhanPerangkat: 'PC KESAMSATAN',
+        jumlahPermintaan: null,
+        jumlahPermintaanPC: null,
+        jumlahPermintaanPrinter: null,
+        alasanPermintaan: ''
+      });
+      refreshUnreadInboxCount();
+    } finally {
+      setDeviceRequestSending(false);
+    }
   };
 
   const saveManageLogin = () => {
@@ -845,6 +1179,20 @@ function App() {
     }
   }, [isAdmin]);
 
+  useEffect(() => {
+    if (!session || session.role !== 'admin') {
+      setUnreadInboxCount(0);
+      return;
+    }
+
+    refreshUnreadInboxCount();
+    const t = window.setInterval(() => {
+      refreshUnreadInboxCount();
+    }, 20000);
+
+    return () => window.clearInterval(t);
+  }, [session, refreshUnreadInboxCount]);
+
   if (!session) {
     return (
       <div className="min-h-screen bg-[#F8FAFC] text-[#1E293B] font-sans flex items-center justify-center p-6">
@@ -1000,6 +1348,22 @@ function App() {
             <Layers className="w-5 h-5" />
             <span>Pilih Kantor</span>
           </button>
+          {isAdmin && (
+            <button
+              onClick={openInbox}
+              className="w-full flex items-center justify-between gap-3 p-3 rounded-xl font-bold text-sm transition-all text-slate-500 hover:bg-slate-50"
+            >
+              <span className="flex items-center gap-3">
+                <Inbox className="w-5 h-5" />
+                <span>Pesan Masuk</span>
+              </span>
+              {unreadInboxCount > 0 && (
+                <span className="min-w-7 h-7 px-2 rounded-full bg-rose-600 text-white text-[11px] font-black flex items-center justify-center">
+                  {unreadInboxCount > 99 ? '99+' : unreadInboxCount}
+                </span>
+              )}
+            </button>
+          )}
           {activeSamsat && (
             <>
               <button 
@@ -1037,6 +1401,24 @@ function App() {
                   <KeyRound className="w-5 h-5" />
                   <span>Manajemen Login</span>
                 </button>
+              )}
+              {!isAdmin && (
+                <>
+                  <button
+                    onClick={() => { setDamageSuccess(null); setIsDamageReportOpen(true); }}
+                    className="w-full flex items-center gap-3 p-3 rounded-xl font-bold text-sm transition-all text-slate-500 hover:bg-slate-50"
+                  >
+                    <Send className="w-5 h-5" />
+                    <span>KIRIM LAPORAN</span>
+                  </button>
+                  <button
+                    onClick={() => { setDeviceRequestSuccess(null); setIsDeviceRequestOpen(true); }}
+                    className="w-full flex items-center gap-3 p-3 rounded-xl font-bold text-sm transition-all text-slate-500 hover:bg-slate-50"
+                  >
+                    <Send className="w-5 h-5" />
+                    <span>PERMINTAAN PERANGKAT</span>
+                  </button>
+                </>
               )}
             </>
           )}
@@ -1895,6 +2277,458 @@ function App() {
                     >
                       Tutup
                     </button>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isDamageReportOpen && !isAdmin && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[3rem] w-full max-w-3xl max-h-[calc(100vh-2rem)] overflow-hidden shadow-2xl relative"
+            >
+              <button onClick={() => setIsDamageReportOpen(false)} className="absolute top-8 right-8 p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl z-20">
+                <XCircle className="w-6 h-6 text-slate-400" />
+              </button>
+
+              <div className="p-6 md:p-10 overflow-y-auto max-h-[calc(100vh-2rem)]">
+                <div className="mb-6">
+                  <h3 className="text-xl font-black text-slate-900">Laporan Kerusakan Perangkat</h3>
+                  <p className="text-xs text-slate-500 font-bold mt-1">{activeSamsat || 'Pilih kantor Samsat terlebih dahulu'}</p>
+                </div>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Kerusakan Perangkat</label>
+                    <textarea
+                      value={damageDraft.kerusakanPerangkat}
+                      onChange={(e) => setDamageDraft(prev => ({ ...prev, kerusakanPerangkat: e.target.value }))}
+                      className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 min-h-[90px]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Layanan yang Rusak</label>
+                    <input
+                      value={damageDraft.layananRusak}
+                      onChange={(e) => setDamageDraft(prev => ({ ...prev, layananRusak: e.target.value }))}
+                      className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Jenis/Merk/SN Perangkat Rusak</label>
+                    <input
+                      value={damageDraft.jenisMerkSnPerangkatRusak}
+                      onChange={(e) => setDamageDraft(prev => ({ ...prev, jenisMerkSnPerangkatRusak: e.target.value }))}
+                      className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Nama dan Kontak Pengguna</label>
+                    <input
+                      value={damageDraft.namaDanKontakPengguna}
+                      onChange={(e) => setDamageDraft(prev => ({ ...prev, namaDanKontakPengguna: e.target.value }))}
+                      className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                      placeholder="Nama - No HP"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Apakah sudah melaksanakan perbaikan secara mandiri?</label>
+                      <select
+                        value={damageDraft.perbaikanMandiri}
+                        onChange={(e) => setDamageDraft(prev => ({ ...prev, perbaikanMandiri: e.target.value as 'Sudah' | 'Belum', kwitansiFile: null }))}
+                        className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-black text-slate-900"
+                      >
+                        <option value="Belum">Belum</option>
+                        <option value="Sudah">Sudah</option>
+                      </select>
+                    </div>
+
+                    {damageDraft.perbaikanMandiri === 'Sudah' ? (
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Upload Foto Kwitansi Bukti Perbaikan</label>
+                        <label className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 flex items-center justify-center gap-2 font-black text-sm text-slate-700 hover:bg-slate-50 cursor-pointer">
+                          <FileUp className="w-5 h-5 text-slate-500" />
+                          <span>{damageDraft.kwitansiFile ? damageDraft.kwitansiFile.name : 'Pilih File'}</span>
+                          <input
+                            type="file"
+                            className="hidden"
+                            accept="image/*,application/pdf"
+                            onChange={(e) => setDamageDraft(prev => ({ ...prev, kwitansiFile: e.target.files?.[0] || null }))}
+                          />
+                        </label>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">UPLOAD FOTO PERANGKAT RUSAK <span className="text-rose-600 font-black">*</span></label>
+                    <label className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 flex items-center justify-center gap-2 font-black text-sm text-slate-700 hover:bg-slate-50 cursor-pointer">
+                      <Upload className="w-5 h-5 text-slate-500" />
+                      <span>{damageDraft.fotoRusakFile ? damageDraft.fotoRusakFile.name : 'Pilih Foto'}</span>
+                      <input
+                        type="file"
+                        className="hidden"
+                        accept="image/*"
+                        onChange={(e) => setDamageDraft(prev => ({ ...prev, fotoRusakFile: e.target.files?.[0] || null }))}
+                      />
+                    </label>
+                  </div>
+
+                  {damageSuccess && (
+                    <div className="px-4 py-3 bg-emerald-50 border border-emerald-100 rounded-2xl text-emerald-700 text-sm font-black">
+                      {damageSuccess}
+                    </div>
+                  )}
+
+                  <button
+                    onClick={submitDamageReport}
+                    disabled={damageSending}
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl font-black flex items-center justify-center gap-2 disabled:bg-slate-200 disabled:text-slate-500"
+                  >
+                    <Send className="w-5 h-5" />
+                    KIRIM
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isDeviceRequestOpen && !isAdmin && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[3rem] w-full max-w-3xl max-h-[calc(100vh-2rem)] overflow-hidden shadow-2xl relative"
+            >
+              <button onClick={() => setIsDeviceRequestOpen(false)} className="absolute top-8 right-8 p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl z-20">
+                <XCircle className="w-6 h-6 text-slate-400" />
+              </button>
+
+              <div className="p-6 md:p-10 overflow-y-auto max-h-[calc(100vh-2rem)]">
+                <div className="mb-6">
+                  <h3 className="text-xl font-black text-slate-900">Pengajuan Permintaan Perangkat</h3>
+                  <p className="text-xs text-slate-500 font-bold mt-1">{activeSamsat || 'Pilih kantor Samsat terlebih dahulu'}</p>
+                </div>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">UPLOAD SURAT PERMINTAAN PERANGKAT ANDA</label>
+                    <label className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 flex items-center justify-center gap-2 font-black text-sm text-slate-700 hover:bg-slate-50 cursor-pointer">
+                      <FileUp className="w-5 h-5 text-slate-500" />
+                      <span>{deviceRequestDraft.suratFile ? deviceRequestDraft.suratFile.name : 'Pilih File'}</span>
+                      <input
+                        type="file"
+                        className="hidden"
+                        accept="image/*,application/pdf"
+                        onChange={(e) => setDeviceRequestDraft(prev => ({ ...prev, suratFile: e.target.files?.[0] || null }))}
+                      />
+                    </label>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">UNTUK LAYANAN <span className="text-rose-600 font-black">*</span></label>
+                    <input
+                      value={deviceRequestDraft.untukLayanan}
+                      onChange={(e) => setDeviceRequestDraft(prev => ({ ...prev, untukLayanan: e.target.value }))}
+                      className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                      placeholder="Contoh: KASIR / PELAYANAN INDUK"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">KEBUTUHAN PERANGKAT</label>
+                      <select
+                        value={deviceRequestDraft.kebutuhanPerangkat}
+                        onChange={(e) => setDeviceRequestDraft(prev => ({
+                          ...prev,
+                          kebutuhanPerangkat: e.target.value as DeviceRequestSubmissionPayload['kebutuhanPerangkat'],
+                          jumlahPermintaan: null,
+                          jumlahPermintaanPC: null,
+                          jumlahPermintaanPrinter: null
+                        }))}
+                        className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-black text-slate-900"
+                      >
+                        <option value="PC KESAMSATAN">PC KESAMSATAN</option>
+                        <option value="PRINTER KESAMSATAN">PRINTER KESAMSATAN</option>
+                        <option value="PC & PRINTER KESAMSATAN">PC & PRINTER KESAMSATAN</option>
+                      </select>
+                    </div>
+
+                    {deviceRequestDraft.kebutuhanPerangkat === 'PC & PRINTER KESAMSATAN' ? (
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Permintaan PC</label>
+                          <input
+                            type="number"
+                            min={0}
+                            value={deviceRequestDraft.jumlahPermintaanPC ?? ''}
+                            onChange={(e) => setDeviceRequestDraft(prev => ({ ...prev, jumlahPermintaanPC: e.target.value === '' ? null : Math.max(0, Number(e.target.value)) }))}
+                            className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-black text-slate-900"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Permintaan Printer</label>
+                          <input
+                            type="number"
+                            min={0}
+                            value={deviceRequestDraft.jumlahPermintaanPrinter ?? ''}
+                            onChange={(e) => setDeviceRequestDraft(prev => ({ ...prev, jumlahPermintaanPrinter: e.target.value === '' ? null : Math.max(0, Number(e.target.value)) }))}
+                            className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-black text-slate-900"
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">JUMLAH PERMINTAAN</label>
+                        <input
+                          type="number"
+                          min={0}
+                          value={deviceRequestDraft.jumlahPermintaan ?? ''}
+                          onChange={(e) => setDeviceRequestDraft(prev => ({ ...prev, jumlahPermintaan: e.target.value === '' ? null : Math.max(0, Number(e.target.value)) }))}
+                          className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-black text-slate-900"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">ALASAN PERMINTAAN PERANGKAT</label>
+                    <textarea
+                      value={deviceRequestDraft.alasanPermintaan}
+                      onChange={(e) => setDeviceRequestDraft(prev => ({ ...prev, alasanPermintaan: e.target.value }))}
+                      className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 min-h-[90px]"
+                    />
+                  </div>
+
+                  {deviceRequestSuccess && (
+                    <div className="px-4 py-3 bg-emerald-50 border border-emerald-100 rounded-2xl text-emerald-700 text-sm font-black">
+                      {deviceRequestSuccess}
+                    </div>
+                  )}
+
+                  <button
+                    onClick={submitDeviceRequest}
+                    disabled={deviceRequestSending}
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl font-black flex items-center justify-center gap-2 disabled:bg-slate-200 disabled:text-slate-500"
+                  >
+                    <Send className="w-5 h-5" />
+                    KIRIM
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isInboxOpen && isAdmin && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[3rem] w-full max-w-6xl max-h-[calc(100vh-2rem)] overflow-hidden shadow-2xl relative"
+            >
+              <button onClick={() => setIsInboxOpen(false)} className="absolute top-8 right-8 p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl z-20">
+                <XCircle className="w-6 h-6 text-slate-400" />
+              </button>
+
+              <div className="p-6 md:p-10 overflow-y-auto max-h-[calc(100vh-2rem)]">
+                <div className="mb-6">
+                  <h3 className="text-xl font-black text-slate-900">Pesan Masuk</h3>
+                  <p className="text-xs text-slate-500 font-bold mt-1">Kelola laporan dan permintaan dari user.</p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="border border-slate-100 rounded-3xl p-5">
+                    <div className="grid grid-cols-2 bg-slate-50 border border-slate-200 rounded-2xl p-1 mb-5">
+                      <button
+                        onClick={async () => { setInboxTab('damage_report'); setActiveInboxMessage(null); await fetchInboxItems('damage_report', 'all'); }}
+                        className={`py-2 rounded-xl text-xs font-black transition-all ${inboxTab === 'damage_report' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
+                      >
+                        Laporan Kerusakan
+                      </button>
+                      <button
+                        onClick={async () => { setInboxTab('device_request'); setActiveInboxMessage(null); await fetchInboxItems('device_request', 'all'); }}
+                        className={`py-2 rounded-xl text-xs font-black transition-all ${inboxTab === 'device_request' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
+                      >
+                        Permintaan Perangkat
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between mb-4">
+                      <p className="text-sm font-black text-slate-900">Daftar Pesan</p>
+                      <button
+                        onClick={async () => { await fetchInboxItems(inboxTab, 'all'); refreshUnreadInboxCount(); }}
+                        className="px-3 py-2 rounded-2xl bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-black"
+                      >
+                        Refresh
+                      </button>
+                    </div>
+
+                    {inboxLoading ? (
+                      <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-sm font-bold text-slate-600">
+                        Memuat pesan...
+                      </div>
+                    ) : (
+                      <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
+                        {inboxItems.length === 0 ? (
+                          <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-sm font-bold text-slate-600">
+                            Belum ada pesan.
+                          </div>
+                        ) : (
+                          inboxItems.map(m => (
+                            <button
+                              key={m.id}
+                              onClick={() => openInboxMessage(m)}
+                              className="w-full text-left bg-white border border-slate-200 rounded-2xl px-4 py-3 hover:bg-slate-50 transition-colors"
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <p className="text-sm font-black text-slate-900 truncate">{m.samsat}</p>
+                                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">
+                                    {m.kind === 'damage_report' ? 'Laporan Kerusakan' : 'Permintaan Perangkat'} • {new Date(m.createdAt).toLocaleString()}
+                                  </p>
+                                </div>
+                                {m.status === 'unread' && (
+                                  <span className="w-3 h-3 rounded-full bg-rose-600 mt-1 shrink-0" />
+                                )}
+                              </div>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="border border-slate-100 rounded-3xl p-5">
+                    <p className="text-sm font-black text-slate-900 mb-4">Detail Pesan</p>
+                    {!activeInboxMessage ? (
+                      <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-sm font-bold text-slate-600">
+                        Pilih pesan untuk melihat detail.
+                      </div>
+                    ) : activeInboxMessage.kind === 'damage_report' ? (
+                      (() => {
+                        const p = activeInboxMessage.payload as DamageReportPayload;
+                        return (
+                          <div className="space-y-4">
+                            <div className="grid grid-cols-1 gap-3">
+                              <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3">
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Kerusakan Perangkat</p>
+                                <p className="text-sm font-bold text-slate-900 mt-1 whitespace-pre-wrap">{p.kerusakanPerangkat}</p>
+                              </div>
+                              <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3">
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Layanan yang Rusak</p>
+                                <p className="text-sm font-bold text-slate-900 mt-1 whitespace-pre-wrap">{p.layananRusak}</p>
+                              </div>
+                              <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3">
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Jenis/Merk/SN Perangkat Rusak</p>
+                                <p className="text-sm font-bold text-slate-900 mt-1 whitespace-pre-wrap">{p.jenisMerkSnPerangkatRusak}</p>
+                              </div>
+                              <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3">
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nama dan Kontak Pengguna</p>
+                                <p className="text-sm font-bold text-slate-900 mt-1 whitespace-pre-wrap">{p.namaDanKontakPengguna}</p>
+                              </div>
+                              <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3">
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Perbaikan Mandiri</p>
+                                <p className="text-sm font-bold text-slate-900 mt-1">{p.perbaikanMandiri}</p>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <div className="border border-slate-100 rounded-2xl p-4">
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Kwitansi Bukti Perbaikan</p>
+                                {p.kwitansiBuktiPerbaikan ? (
+                                  <button
+                                    onClick={() => window.open(p.kwitansiBuktiPerbaikan?.dataUrl || '', '_blank')}
+                                    className="mt-2 w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-black text-blue-600 hover:bg-slate-50"
+                                  >
+                                    Lihat
+                                  </button>
+                                ) : (
+                                  <p className="text-sm font-bold text-slate-600 mt-2">Tidak ada</p>
+                                )}
+                              </div>
+                              <div className="border border-slate-100 rounded-2xl p-4">
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Foto Perangkat Rusak</p>
+                                {p.fotoPerangkatRusak ? (
+                                  <button
+                                    onClick={() => window.open(p.fotoPerangkatRusak?.dataUrl || '', '_blank')}
+                                    className="mt-2 w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-black text-blue-600 hover:bg-slate-50"
+                                  >
+                                    Lihat
+                                  </button>
+                                ) : (
+                                  <p className="text-sm font-bold text-slate-600 mt-2">Tidak ada</p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()
+                    ) : (
+                      (() => {
+                        const p = activeInboxMessage.payload as DeviceRequestSubmissionPayload;
+                        const jumlahText =
+                          p.kebutuhanPerangkat === 'PC & PRINTER KESAMSATAN'
+                            ? `PC ${Number(p.jumlahPermintaanPC || 0)} • PRINTER ${Number(p.jumlahPermintaanPrinter || 0)}`
+                            : `${Number(p.jumlahPermintaan || 0)}`;
+                        return (
+                          <div className="space-y-4">
+                            <div className="grid grid-cols-1 gap-3">
+                              <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3">
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Untuk Layanan</p>
+                                <p className="text-sm font-bold text-slate-900 mt-1 whitespace-pre-wrap">{p.untukLayanan}</p>
+                              </div>
+                              <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3">
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Kebutuhan Perangkat</p>
+                                <p className="text-sm font-bold text-slate-900 mt-1">{p.kebutuhanPerangkat}</p>
+                              </div>
+                              <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3">
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Jumlah Permintaan</p>
+                                <p className="text-sm font-bold text-slate-900 mt-1">{jumlahText}</p>
+                              </div>
+                              <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3">
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Alasan Permintaan Perangkat</p>
+                                <p className="text-sm font-bold text-slate-900 mt-1 whitespace-pre-wrap">{p.alasanPermintaan}</p>
+                              </div>
+                            </div>
+
+                            <div className="border border-slate-100 rounded-2xl p-4">
+                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Surat Permintaan</p>
+                              {p.suratPermintaan ? (
+                                <button
+                                  onClick={() => window.open(p.suratPermintaan?.dataUrl || '', '_blank')}
+                                  className="mt-2 w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-black text-blue-600 hover:bg-slate-50"
+                                >
+                                  Lihat
+                                </button>
+                              ) : (
+                                <p className="text-sm font-bold text-slate-600 mt-2">Tidak ada</p>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })()
+                    )}
                   </div>
                 </div>
               </div>
