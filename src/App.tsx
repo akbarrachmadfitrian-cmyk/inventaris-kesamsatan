@@ -441,7 +441,7 @@ function App() {
   });
 
   const isAdmin = session?.role === 'admin';
-  const strictSheetSync = true;
+  const strictSheetSync = false;
 
   const handleLogin = (role: AuthRole) => {
     const creds = getAuthCredentials();
@@ -1886,21 +1886,14 @@ function App() {
                           </p>
                         </div>
                       </div>
-                      {selectedDevice.isComplete ? (
-                        <div className="bg-slate-50 p-8 rounded-[2.5rem] flex flex-col items-center border border-slate-100">
-                          <div className="bg-white p-4 rounded-3xl shadow-sm mb-6">
-                            <QRCodeSVG value={JSON.stringify({ id: selectedDevice.id, sn: selectedDevice.serialNumber })} size={140} level="H" />
-                          </div>
-                          <button onClick={() => window.print()} className="w-full bg-slate-900 text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-3">
-                            <Printer className="w-5 h-5" /> Cetak Label QR
-                          </button>
+                      <div className="bg-slate-50 p-8 rounded-[2.5rem] flex flex-col items-center border border-slate-100">
+                        <div className="bg-white p-4 rounded-3xl shadow-sm mb-6">
+                          <QRCodeSVG value={JSON.stringify({ id: selectedDevice.id, sn: selectedDevice.serialNumber })} size={140} level="H" />
                         </div>
-                      ) : (
-                        <div className="bg-slate-50 p-8 rounded-[2.5rem] border-2 border-dashed border-slate-200 text-center">
-                          <QrCode className="w-12 h-12 text-slate-200 mx-auto mb-4" />
-                          <p className="text-xs text-slate-400 font-bold">Lengkapi foto untuk QR</p>
-                        </div>
-                      )}
+                        <button onClick={() => window.print()} className="w-full bg-slate-900 text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-3">
+                          <Printer className="w-5 h-5" /> Cetak Label QR
+                        </button>
+                      </div>
                     </>
                   )}
                 </div>
