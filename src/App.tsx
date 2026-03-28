@@ -506,6 +506,10 @@ const parseSheetCSV = (csvData: string, defaultSamsat: string): Device[] => {
         finalSamsat = "SAMSAT MARABAHAN";
         finalServiceUnit = "SAMSAT BANTU HANDIL BAKTI";
       }
+      if (currentSamsat.toUpperCase().includes("JEJAK")) {
+        finalSamsat = "SAMSAT MARABAHAN";
+        finalServiceUnit = "SAMSAT JEJAK";
+      }
 
       const rowNo = (cells[0] || '').trim();
       const fallbackId = rowNo ? `${defaultSamsat}-${rowNo}` : `dev-${defaultSamsat}-${index}`;
