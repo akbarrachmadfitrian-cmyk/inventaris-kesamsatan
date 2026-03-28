@@ -1623,15 +1623,15 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] text-[#1E293B] font-sans flex overflow-hidden">
+    <div className="min-h-[100dvh] bg-[#F8FAFC] text-[#1E293B] font-sans flex flex-col md:flex-row overflow-x-hidden md:overflow-hidden">
       {/* Sidebar */}
-      <aside className="w-72 bg-white border-r border-slate-200 flex flex-col z-40 shrink-0">
-        <div className="p-6 flex flex-col items-center gap-3 border-b border-slate-50">
+      <aside className="w-full md:w-72 bg-white border-b md:border-b-0 md:border-r border-slate-200 flex flex-col z-40 shrink-0">
+        <div className="p-4 sm:p-6 flex flex-col items-center gap-3 border-b border-slate-50">
           <img
             src="https://bapenda.kalselprov.go.id/wp-content/uploads/2025/08/Logo-Sayembara-Bapenda.png?v=20250823"
             alt="Bapenda Kalimantan Selatan"
             referrerPolicy="no-referrer"
-            className="h-12 w-auto object-contain"
+            className="h-10 sm:h-12 w-auto object-contain"
           />
           <div className="text-center">
             <h1 className="text-sm font-bold text-slate-900 leading-tight">Inventaris Kesamsatan</h1>
@@ -1792,17 +1792,17 @@ function App() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-grow overflow-y-auto">
-        <header className="p-8 pb-4">
-          <h2 className="text-2xl font-black text-slate-900 mb-1">
+      <main className="flex-grow md:overflow-y-auto">
+        <header className="p-4 sm:p-8 pb-3 sm:pb-4">
+          <h2 className="text-xl sm:text-2xl font-black text-slate-900 mb-1">
             {viewMode === 'selection' ? 'Daftar Kantor Samsat' : viewMode === 'scan-qr' ? 'Scan QR' : 'Dashboard'}
           </h2>
-          <p className="text-sm text-slate-500 font-medium">
+          <p className="text-xs sm:text-sm text-slate-500 font-medium">
             {viewMode === 'selection' ? 'Pilih kantor untuk melihat data inventaris' : viewMode === 'scan-qr' ? 'Pindai QR code untuk melihat detail perangkat' : `Ringkasan inventaris — ${activeSamsat}`}
           </p>
         </header>
 
-        <div className="p-8 space-y-8">
+        <div className="p-4 sm:p-8 space-y-6 sm:space-y-8">
           {viewMode === 'selection' ? (
             <div className="space-y-6">
               {samsatList.length > 0 ? (
@@ -1814,7 +1814,7 @@ function App() {
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: i * 0.1 }}
                       onClick={() => { setActiveSamsat(samsat); setViewMode('dashboard'); }}
-                      className="bg-white p-8 rounded-[2rem] border border-slate-100 shadow-sm hover:shadow-xl hover:border-blue-200 transition-all cursor-pointer group text-center"
+                      className="bg-white p-6 sm:p-8 rounded-[2rem] border border-slate-100 shadow-sm hover:shadow-xl hover:border-blue-200 transition-all cursor-pointer group text-center"
                     >
                       <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-6 group-hover:bg-blue-600 group-hover:text-white transition-all">
                         <Building2 className="w-8 h-8" />
