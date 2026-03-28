@@ -1623,9 +1623,9 @@ function App() {
   }
 
   return (
-    <div className="min-h-[100dvh] bg-[#F8FAFC] text-[#1E293B] font-sans flex flex-col md:flex-row overflow-x-hidden md:overflow-hidden">
+    <div className="min-h-[100dvh] bg-[#F8FAFC] text-[#1E293B] font-sans flex flex-col lg:flex-row overflow-x-hidden lg:overflow-hidden">
       {/* Sidebar */}
-      <aside className="w-full md:w-72 bg-white border-b md:border-b-0 md:border-r border-slate-200 flex flex-col z-40 shrink-0">
+      <aside className="w-full lg:w-72 bg-white border-b lg:border-b-0 lg:border-r border-slate-200 flex flex-col z-40 shrink-0">
         <div className="p-4 sm:p-6 flex flex-col items-center gap-3 border-b border-slate-50">
           <img
             src="https://bapenda.kalselprov.go.id/wp-content/uploads/2025/08/Logo-Sayembara-Bapenda.png?v=20250823"
@@ -1792,7 +1792,7 @@ function App() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-grow md:overflow-y-auto">
+      <main className="flex-grow lg:overflow-y-auto">
         <header className="p-4 sm:p-8 pb-3 sm:pb-4">
           <h2 className="text-xl sm:text-2xl font-black text-slate-900 mb-1">
             {viewMode === 'selection' ? 'Daftar Kantor Samsat' : viewMode === 'scan-qr' ? 'Scan QR' : 'Dashboard'}
@@ -1806,7 +1806,7 @@ function App() {
           {viewMode === 'selection' ? (
             <div className="space-y-6">
               {samsatList.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
                   {samsatList.map((samsat, i) => (
                     <motion.div
                       key={samsat}
@@ -1851,7 +1851,7 @@ function App() {
             renderScanQR()
           ) : viewMode === 'dashboard' ? (
             <>
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
                 {[
                   { label: 'Total Perangkat', value: stats.total, icon: <Monitor className="w-6 h-6" />, color: 'text-blue-600', bg: 'bg-blue-50' },
                   { label: 'Kondisi Baik', value: stats.baik, icon: <CheckCircle2 className="w-6 h-6" />, color: 'text-emerald-600', bg: 'bg-emerald-50' },
@@ -1998,7 +1998,7 @@ function App() {
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
                 {filteredDevices.map((d) => (
                   <motion.div 
                     key={d.id}
