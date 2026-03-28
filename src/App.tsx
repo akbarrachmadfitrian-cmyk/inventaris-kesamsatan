@@ -241,10 +241,13 @@ const buildMessagePdf = async (msg: InboxMessage): Promise<Blob> => {
   doc.text('Pesan Masuk', left, y);
   y += 22;
 
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12);
+  doc.text(`Nomor Tiket: ${msg.id}`, left, y);
+  y += 18;
+
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(10);
-  doc.text(`ID: ${msg.id}`, left, y);
-  y += lineGap;
   doc.text(`Samsat: ${msg.samsat}`, left, y);
   y += lineGap;
   doc.text(`Jenis: ${msg.kind === 'damage_report' ? 'Laporan Kerusakan' : 'Permintaan Perangkat'}`, left, y);
