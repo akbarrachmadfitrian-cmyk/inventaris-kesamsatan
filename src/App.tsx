@@ -1550,20 +1550,20 @@ function App() {
 
   if (!session) {
     return (
-      <div className="min-h-screen bg-[#F8FAFC] text-[#1E293B] font-sans flex items-center justify-center p-6">
+      <div className="min-h-[100dvh] bg-[#F8FAFC] text-[#1E293B] font-sans flex items-start sm:items-center justify-center px-4 py-6 sm:p-6 pt-[calc(env(safe-area-inset-top)+1.5rem)] pb-[calc(env(safe-area-inset-bottom)+1.5rem)] overflow-y-auto">
         <div className="w-full max-w-md">
-          <div className="flex flex-col items-center mb-7">
+          <div className="flex flex-col items-center mb-6 sm:mb-7">
             <img
               src="https://bapenda.kalselprov.go.id/wp-content/uploads/2025/08/Logo-Sayembara-Bapenda.png"
               alt="Bapenda Kalimantan Selatan"
               referrerPolicy="no-referrer"
-              className="h-20 w-auto object-contain"
+              className="h-16 sm:h-20 w-auto object-contain"
             />
             <h1 className="mt-4 text-xl font-black text-slate-900 text-center">Inventaris Kesamsatan</h1>
             <p className="text-[11px] text-slate-500 font-bold text-center">BAPENDA PROV KALSEL</p>
           </div>
 
-          <div className="bg-white border border-slate-200 rounded-[2rem] p-8 shadow-sm">
+          <div className="bg-white border border-slate-200 rounded-[2rem] p-5 sm:p-8 shadow-sm">
             <div className="grid grid-cols-2 bg-slate-50 border border-slate-200 rounded-2xl p-1 mb-6">
               <button
                 onClick={() => { setAuthTab('admin'); setAuthUsername(''); setAuthPassword(''); setAuthError(null); }}
@@ -1586,7 +1586,7 @@ function App() {
                   value={authUsername}
                   onChange={(e) => setAuthUsername(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') handleLogin(authTab); }}
-                  className="w-full p-3 bg-white border border-slate-200 rounded-xl font-bold text-sm focus:ring-2 focus:ring-blue-500/20 outline-none"
+                  className="w-full p-4 sm:p-3 bg-white border border-slate-200 rounded-xl font-bold text-base sm:text-sm focus:ring-2 focus:ring-blue-500/20 outline-none"
                   placeholder="Masukkan user"
                 />
               </div>
@@ -1598,7 +1598,7 @@ function App() {
                   value={authPassword}
                   onChange={(e) => setAuthPassword(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') handleLogin(authTab); }}
-                  className="w-full p-3 bg-white border border-slate-200 rounded-xl font-bold text-sm focus:ring-2 focus:ring-blue-500/20 outline-none"
+                  className="w-full p-4 sm:p-3 bg-white border border-slate-200 rounded-xl font-bold text-base sm:text-sm focus:ring-2 focus:ring-blue-500/20 outline-none"
                   placeholder="Masukkan password"
                 />
               </div>
@@ -1611,7 +1611,7 @@ function App() {
 
               <button
                 onClick={() => handleLogin(authTab)}
-                className="w-full px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black transition-all shadow-lg shadow-blue-200"
+                className="w-full px-6 py-4 sm:py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black text-base sm:text-sm transition-all shadow-lg shadow-blue-200"
               >
                 Masuk
               </button>
