@@ -68,6 +68,7 @@ const LS_DELETED_DEVICE_IDS = 'samsat_deleted_device_ids';
 const LS_ADDED_DEVICES = 'samsat_added_devices';
 const LS_DEVICE_REQUESTS = 'samsat_device_requests';
 const LS_INBOX_MESSAGES = 'samsat_inbox_messages';
+const LS_MESSAGE_DIRECTORY = 'samsat_message_directory';
 
 type InboxKind = 'damage_report' | 'device_request';
 type InboxStatus = 'unread' | 'read';
@@ -85,6 +86,7 @@ interface DamageReportPayload {
   jenisMerkSnPerangkatRusak: string;
   namaDanKontakPengguna: string;
   perbaikanMandiri: 'Sudah' | 'Belum';
+  alasanBelumMelaksanakanPerbaikanMandiri: string | null;
   kwitansiBuktiPerbaikan: InboxAttachment | null;
   fotoPerangkatRusak: InboxAttachment | null;
 }
@@ -106,6 +108,21 @@ interface InboxMessage {
   samsat: string;
   createdAt: string;
   payload: DamageReportPayload | DeviceRequestSubmissionPayload;
+}
+
+type MessageDirectoryKind = 'message' | 'kwitansi' | 'foto' | 'surat';
+
+interface MessageDirectoryItem {
+  id: string;
+  inboxMessageId: string;
+  inboxKind: InboxKind;
+  samsat: string;
+  kind: MessageDirectoryKind;
+  fileName: string;
+  mimeType: 'application/pdf';
+  dataUrl: string;
+  createdAt: string;
+  expiresAt: string;
 }
 
 type AuthRole = 'admin' | 'user';
@@ -136,6 +153,16 @@ const safeParseJSON = <T,>(raw: string | null, fallback: T): T => {
 const loadInboxMessages = () => safeParseJSON<InboxMessage[]>(localStorage.getItem(LS_INBOX_MESSAGES), []);
 const saveInboxMessages = (messages: InboxMessage[]) => localStorage.setItem(LS_INBOX_MESSAGES, JSON.stringify(messages));
 
+const loadMessageDirectory = () => safeParseJSON<MessageDirectoryItem[]>(localStorage.getItem(LS_MESSAGE_DIRECTORY), []);
+const saveMessageDirectory = (items: MessageDirectoryItem[]) => localStorage.setItem(LS_MESSAGE_DIRECTORY, JSON.stringify(items));
+const cleanupMessageDirectory = (items: MessageDirectoryItem[]) => {
+  const now = Date.now();
+  return items.filter(i => {
+    const t = new Date(i.expiresAt).getTime();
+    return Number.isFinite(t) && t > now;
+  });
+};
+
 const readFileAsAttachment = (file: File): Promise<InboxAttachment> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -150,6 +177,154 @@ const readFileAsAttachment = (file: File): Promise<InboxAttachment> => {
     };
     reader.readAsDataURL(file);
   });
+};
+
+const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
+
+const validatePickedFile = (file: File, opts: { allowedMimeTypes: string[]; maxBytes: number; label: string }) => {
+  const allowed = new Set(opts.allowedMimeTypes);
+  if (!allowed.has(file.type)) {
+    window.alert(`${opts.label} hanya menerima ${opts.allowedMimeTypes.join(', ')}.`);
+    return false;
+  }
+  if (file.size > opts.maxBytes) {
+    window.alert(`${opts.label} maksimal ${(opts.maxBytes / (1024 * 1024)).toFixed(0)} MB.`);
+    return false;
+  }
+  return true;
+};
+
+const blobToDataUrl = (blob: Blob): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Blob read failed'));
+    reader.onloadend = () => resolve(String(reader.result || ''));
+    reader.readAsDataURL(blob);
+  });
+};
+
+const dataUrlToBlob = async (dataUrl: string): Promise<Blob> => {
+  const res = await fetch(dataUrl);
+  return await res.blob();
+};
+
+const triggerDownloadBlob = (blob: Blob, fileName: string) => {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+};
+
+const getImageSizeFromDataUrl = (dataUrl: string): Promise<{ width: number; height: number }> => {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve({ width: img.naturalWidth || img.width, height: img.naturalHeight || img.height });
+    img.onerror = () => reject(new Error('Image load failed'));
+    img.src = dataUrl;
+  });
+};
+
+const buildMessagePdf = async (msg: InboxMessage): Promise<Blob> => {
+  const mod = await import('jspdf');
+  const doc = new mod.jsPDF({ unit: 'pt', format: 'a4' });
+  const left = 40;
+  const top = 50;
+  const lineGap = 14;
+  let y = top;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.text('Pesan Masuk', left, y);
+  y += 22;
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.text(`ID: ${msg.id}`, left, y);
+  y += lineGap;
+  doc.text(`Samsat: ${msg.samsat}`, left, y);
+  y += lineGap;
+  doc.text(`Jenis: ${msg.kind === 'damage_report' ? 'Laporan Kerusakan' : 'Permintaan Perangkat'}`, left, y);
+  y += lineGap;
+  doc.text(`Waktu: ${new Date(msg.createdAt).toLocaleString()}`, left, y);
+  y += 20;
+
+  const addField = (label: string, value: string) => {
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const maxWidth = pageWidth - left * 2;
+    doc.setFont('helvetica', 'bold');
+    doc.text(label, left, y);
+    y += lineGap;
+    doc.setFont('helvetica', 'normal');
+    const lines = doc.splitTextToSize(value || '-', maxWidth);
+    lines.forEach((ln: string) => {
+      const pageHeight = doc.internal.pageSize.getHeight();
+      if (y > pageHeight - 60) {
+        doc.addPage();
+        y = top;
+      }
+      doc.text(ln, left, y);
+      y += lineGap;
+    });
+    y += 10;
+  };
+
+  if (msg.kind === 'damage_report') {
+    const p = msg.payload as DamageReportPayload;
+    addField('Kerusakan Perangkat', p.kerusakanPerangkat);
+    addField('Layanan yang Rusak', p.layananRusak);
+    addField('Jenis/Merk/SN Perangkat Rusak', p.jenisMerkSnPerangkatRusak);
+    addField('Nama dan Kontak Pengguna', p.namaDanKontakPengguna);
+    addField('Perbaikan Mandiri', p.perbaikanMandiri);
+    if (p.perbaikanMandiri === 'Belum') {
+      addField('Alasan Belum Melaksanakan Perbaikan Secara Mandiri', p.alasanBelumMelaksanakanPerbaikanMandiri || '-');
+    }
+    addField('Lampiran', [
+      `Kwitansi: ${p.kwitansiBuktiPerbaikan ? p.kwitansiBuktiPerbaikan.fileName : 'Tidak ada'}`,
+      `Foto Perangkat Rusak: ${p.fotoPerangkatRusak ? p.fotoPerangkatRusak.fileName : 'Tidak ada'}`
+    ].join('\n'));
+  } else {
+    const p = msg.payload as DeviceRequestSubmissionPayload;
+    const jumlahText =
+      p.kebutuhanPerangkat === 'PC & PRINTER KESAMSATAN'
+        ? `PC ${Number(p.jumlahPermintaanPC || 0)} • PRINTER ${Number(p.jumlahPermintaanPrinter || 0)}`
+        : `${Number(p.jumlahPermintaan || 0)}`;
+    addField('Untuk Layanan', p.untukLayanan);
+    addField('Kebutuhan Perangkat', p.kebutuhanPerangkat);
+    addField('Jumlah Permintaan', jumlahText);
+    addField('Alasan Permintaan Perangkat', p.alasanPermintaan);
+    addField('Surat Permintaan', p.suratPermintaan ? p.suratPermintaan.fileName : 'Tidak ada');
+  }
+
+  return doc.output('blob');
+};
+
+const buildPdfFromImageAttachment = async (title: string, att: InboxAttachment): Promise<Blob> => {
+  const mod = await import('jspdf');
+  const doc = new mod.jsPDF({ unit: 'pt', format: 'a4' });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  doc.text(title, 40, 40);
+
+  const { width, height } = await getImageSizeFromDataUrl(att.dataUrl);
+  const maxW = pageWidth - 80;
+  const maxH = pageHeight - 120;
+  const scale = Math.min(maxW / width, maxH / height);
+  const drawW = Math.max(1, Math.floor(width * scale));
+  const drawH = Math.max(1, Math.floor(height * scale));
+  const x = Math.floor((pageWidth - drawW) / 2);
+  const y = 70;
+
+  const fmt = att.mimeType === 'image/png' ? 'PNG' : 'JPEG';
+  doc.addImage(att.dataUrl, fmt, x, y, drawW, drawH);
+
+  return doc.output('blob');
 };
 
 const createLocalId = () => {
@@ -392,11 +567,12 @@ function App() {
   });
 
   const [isInboxOpen, setIsInboxOpen] = useState(false);
-  const [inboxTab, setInboxTab] = useState<InboxKind>('damage_report');
+  const [inboxTab, setInboxTab] = useState<InboxKind | 'downloads'>('damage_report');
   const [inboxLoading, setInboxLoading] = useState(false);
   const [inboxItems, setInboxItems] = useState<InboxMessage[]>([]);
   const [unreadInboxCount, setUnreadInboxCount] = useState(0);
   const [activeInboxMessage, setActiveInboxMessage] = useState<InboxMessage | null>(null);
+  const [messageDirectory, setMessageDirectory] = useState<MessageDirectoryItem[]>(() => cleanupMessageDirectory(loadMessageDirectory()));
 
   const [isDamageReportOpen, setIsDamageReportOpen] = useState(false);
   const [damageSending, setDamageSending] = useState(false);
@@ -407,6 +583,7 @@ function App() {
     jenisMerkSnPerangkatRusak: string;
     namaDanKontakPengguna: string;
     perbaikanMandiri: 'Sudah' | 'Belum';
+    alasanBelumMelaksanakanPerbaikanMandiri: string;
     kwitansiFile: File | null;
     fotoRusakFile: File | null;
   }>({
@@ -415,6 +592,7 @@ function App() {
     jenisMerkSnPerangkatRusak: '',
     namaDanKontakPengguna: '',
     perbaikanMandiri: 'Belum',
+    alasanBelumMelaksanakanPerbaikanMandiri: '',
     kwitansiFile: null,
     fotoRusakFile: null
   });
@@ -545,6 +723,11 @@ function App() {
     setActiveInboxMessage(null);
     setInboxTab('damage_report');
     setIsInboxOpen(true);
+    setMessageDirectory(prev => {
+      const cleaned = cleanupMessageDirectory(prev);
+      if (cleaned.length !== prev.length) saveMessageDirectory(cleaned);
+      return cleaned;
+    });
     await fetchInboxItems('damage_report', 'all');
     refreshUnreadInboxCount();
   };
@@ -583,6 +766,90 @@ function App() {
     }
   };
 
+  useEffect(() => {
+    saveMessageDirectory(messageDirectory);
+  }, [messageDirectory]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    const t = window.setInterval(() => {
+      setMessageDirectory(prev => {
+        const cleaned = cleanupMessageDirectory(prev);
+        if (cleaned.length !== prev.length) saveMessageDirectory(cleaned);
+        return cleaned;
+      });
+    }, 10 * 60 * 1000);
+    return () => window.clearInterval(t);
+  }, [isAdmin]);
+
+  const storeMessageDirectoryPdf = async (opts: {
+    msg: InboxMessage;
+    kind: MessageDirectoryKind;
+    fileName: string;
+    blob: Blob;
+  }) => {
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000);
+    const dataUrl = await blobToDataUrl(opts.blob);
+    const item: MessageDirectoryItem = {
+      id: createLocalId(),
+      inboxMessageId: opts.msg.id,
+      inboxKind: opts.msg.kind,
+      samsat: opts.msg.samsat,
+      kind: opts.kind,
+      fileName: opts.fileName,
+      mimeType: 'application/pdf',
+      dataUrl,
+      createdAt: now.toISOString(),
+      expiresAt: expiresAt.toISOString()
+    };
+    setMessageDirectory(prev => cleanupMessageDirectory([item, ...prev]));
+  };
+
+  const downloadInboxMessagePdf = async (msg: InboxMessage) => {
+    const blob = await buildMessagePdf(msg);
+    const fileName = `pesan-${msg.kind}-${msg.samsat}-${msg.id}.pdf`.replaceAll(' ', '_');
+    triggerDownloadBlob(blob, fileName);
+    await storeMessageDirectoryPdf({ msg, kind: 'message', fileName, blob });
+  };
+
+  const downloadDamageAttachmentPdf = async (msg: InboxMessage, kind: 'kwitansi' | 'foto', att: InboxAttachment) => {
+    if (!att?.dataUrl) return;
+    if (att.mimeType !== 'image/jpeg' && att.mimeType !== 'image/png' && att.mimeType !== 'image/jpg') {
+      window.alert('Lampiran harus berupa JPG/JPEG/PNG agar dapat diunduh sebagai PDF.');
+      return;
+    }
+    const blob = await buildPdfFromImageAttachment(kind === 'kwitansi' ? 'Kwitansi Bukti Perbaikan' : 'Foto Perangkat Rusak', att);
+    const fileName = `${kind}-${msg.samsat}-${msg.id}.pdf`.replaceAll(' ', '_');
+    triggerDownloadBlob(blob, fileName);
+    await storeMessageDirectoryPdf({ msg, kind, fileName, blob });
+  };
+
+  const downloadSuratPdf = async (msg: InboxMessage, att: InboxAttachment) => {
+    if (!att?.dataUrl) return;
+    if (att.mimeType !== 'application/pdf') {
+      window.alert('Surat harus berupa PDF.');
+      return;
+    }
+    const blob = await dataUrlToBlob(att.dataUrl);
+    const fileName = `surat-${msg.samsat}-${msg.id}.pdf`.replaceAll(' ', '_');
+    triggerDownloadBlob(blob, fileName);
+    await storeMessageDirectoryPdf({ msg, kind: 'surat', fileName, blob });
+  };
+
+  const deleteMessageDirectoryItem = (id: string) => {
+    setMessageDirectory(prev => {
+      const next = prev.filter(i => i.id !== id);
+      saveMessageDirectory(next);
+      return next;
+    });
+  };
+
+  const downloadMessageDirectoryItem = async (item: MessageDirectoryItem) => {
+    const blob = await dataUrlToBlob(item.dataUrl);
+    triggerDownloadBlob(blob, item.fileName);
+  };
+
   const submitDamageReport = async () => {
     if (!activeSamsat) {
       window.alert('Pilih kantor Samsat terlebih dahulu.');
@@ -604,6 +871,14 @@ function App() {
       window.alert('Kolom "Nama dan Kontak Pengguna" wajib diisi.');
       return;
     }
+    if (damageDraft.perbaikanMandiri === 'Belum' && !damageDraft.alasanBelumMelaksanakanPerbaikanMandiri.trim()) {
+      window.alert('Kolom "Alasan belum melaksanakan perbaikan secara mandiri" wajib diisi.');
+      return;
+    }
+    if (damageDraft.perbaikanMandiri === 'Sudah' && !damageDraft.kwitansiFile) {
+      window.alert('Upload foto kwitansi bukti perbaikan wajib diisi jika memilih "Sudah".');
+      return;
+    }
     if (!damageDraft.fotoRusakFile) {
       window.alert('Upload foto perangkat rusak wajib diisi.');
       return;
@@ -611,6 +886,14 @@ function App() {
 
     setDamageSending(true);
     try {
+      if (!validatePickedFile(damageDraft.fotoRusakFile, { allowedMimeTypes: ['image/jpeg', 'image/png', 'image/jpg'], maxBytes: MAX_UPLOAD_BYTES, label: 'Upload foto perangkat rusak' })) {
+        return;
+      }
+      if (damageDraft.perbaikanMandiri === 'Sudah' && damageDraft.kwitansiFile) {
+        if (!validatePickedFile(damageDraft.kwitansiFile, { allowedMimeTypes: ['image/jpeg', 'image/png', 'image/jpg'], maxBytes: MAX_UPLOAD_BYTES, label: 'Upload foto kwitansi bukti perbaikan' })) {
+          return;
+        }
+      }
       const foto = await readFileAsAttachment(damageDraft.fotoRusakFile);
       const kwitansi =
         damageDraft.perbaikanMandiri === 'Sudah' && damageDraft.kwitansiFile ? await readFileAsAttachment(damageDraft.kwitansiFile) : null;
@@ -621,6 +904,7 @@ function App() {
         jenisMerkSnPerangkatRusak: damageDraft.jenisMerkSnPerangkatRusak.trim(),
         namaDanKontakPengguna: damageDraft.namaDanKontakPengguna.trim(),
         perbaikanMandiri: damageDraft.perbaikanMandiri,
+        alasanBelumMelaksanakanPerbaikanMandiri: damageDraft.perbaikanMandiri === 'Belum' ? damageDraft.alasanBelumMelaksanakanPerbaikanMandiri.trim() : null,
         kwitansiBuktiPerbaikan: kwitansi,
         fotoPerangkatRusak: foto
       };
@@ -633,6 +917,7 @@ function App() {
         jenisMerkSnPerangkatRusak: '',
         namaDanKontakPengguna: '',
         perbaikanMandiri: 'Belum',
+        alasanBelumMelaksanakanPerbaikanMandiri: '',
         kwitansiFile: null,
         fotoRusakFile: null
       });
@@ -649,6 +934,9 @@ function App() {
     }
     if (!deviceRequestDraft.suratFile) {
       window.alert('Upload surat permintaan perangkat wajib diisi.');
+      return;
+    }
+    if (!validatePickedFile(deviceRequestDraft.suratFile, { allowedMimeTypes: ['application/pdf'], maxBytes: MAX_UPLOAD_BYTES, label: 'Upload surat permintaan perangkat' })) {
       return;
     }
     if (!deviceRequestDraft.untukLayanan.trim()) {
@@ -1218,7 +1506,7 @@ function App() {
   };
 
   useEffect(() => {
-    let html5QrcodeScanner: any = null;
+    let html5QrcodeScanner: { render: (onSuccess: (decodedText: string) => void, onError: (errorMessage: string) => void) => void; clear: () => Promise<void> } | null = null;
     if (viewMode === 'scan-qr' && isAdmin) {
       import('html5-qrcode').then(({ Html5QrcodeScanner }) => {
         html5QrcodeScanner = new Html5QrcodeScanner(
@@ -1232,7 +1520,7 @@ function App() {
             if (data.id) {
               const device = devices.find(d => d.id === data.id);
               if (device) {
-                html5QrcodeScanner.clear();
+                void html5QrcodeScanner?.clear();
                 if (device.samsat !== activeSamsat) {
                   setActiveSamsat(device.samsat);
                 }
@@ -1246,9 +1534,7 @@ function App() {
           } catch (e) {
             window.alert('QR Code tidak valid.');
           }
-        }, (err: any) => {
-          // ignore error
-        });
+        }, () => {});
       });
     }
 
@@ -2474,7 +2760,15 @@ function App() {
                       <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Apakah sudah melaksanakan perbaikan secara mandiri?</label>
                       <select
                         value={damageDraft.perbaikanMandiri}
-                        onChange={(e) => setDamageDraft(prev => ({ ...prev, perbaikanMandiri: e.target.value as 'Sudah' | 'Belum', kwitansiFile: null }))}
+                        onChange={(e) => {
+                          const v = e.target.value as 'Sudah' | 'Belum';
+                          setDamageDraft(prev => ({
+                            ...prev,
+                            perbaikanMandiri: v,
+                            kwitansiFile: null,
+                            alasanBelumMelaksanakanPerbaikanMandiri: v === 'Belum' ? prev.alasanBelumMelaksanakanPerbaikanMandiri : ''
+                          }));
+                        }}
                         className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-black text-slate-900"
                       >
                         <option value="Belum">Belum</option>
@@ -2491,13 +2785,30 @@ function App() {
                           <input
                             type="file"
                             className="hidden"
-                            accept="image/*,application/pdf"
-                            onChange={(e) => setDamageDraft(prev => ({ ...prev, kwitansiFile: e.target.files?.[0] || null }))}
+                            accept="image/jpeg,image/png,.jpg,.jpeg,.png"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0] || null;
+                              if (!file) return setDamageDraft(prev => ({ ...prev, kwitansiFile: null }));
+                              if (!validatePickedFile(file, { allowedMimeTypes: ['image/jpeg', 'image/png', 'image/jpg'], maxBytes: MAX_UPLOAD_BYTES, label: 'Upload foto kwitansi bukti perbaikan' })) return;
+                              setDamageDraft(prev => ({ ...prev, kwitansiFile: file }));
+                            }}
                           />
                         </label>
+                        <p className="mt-2 text-[10px] font-bold text-slate-400">Format: JPG/JPEG/PNG • Maks 2MB</p>
                       </div>
                     ) : null}
                   </div>
+
+                  {damageDraft.perbaikanMandiri === 'Belum' ? (
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Alasan belum melaksanakan perbaikan secara mandiri <span className="text-rose-600 font-black">*</span></label>
+                      <textarea
+                        value={damageDraft.alasanBelumMelaksanakanPerbaikanMandiri}
+                        onChange={(e) => setDamageDraft(prev => ({ ...prev, alasanBelumMelaksanakanPerbaikanMandiri: e.target.value }))}
+                        className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 min-h-[90px]"
+                      />
+                    </div>
+                  ) : null}
 
                   <div>
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">UPLOAD FOTO PERANGKAT RUSAK <span className="text-rose-600 font-black">*</span></label>
@@ -2507,10 +2818,16 @@ function App() {
                       <input
                         type="file"
                         className="hidden"
-                        accept="image/*"
-                        onChange={(e) => setDamageDraft(prev => ({ ...prev, fotoRusakFile: e.target.files?.[0] || null }))}
+                        accept="image/jpeg,image/png,.jpg,.jpeg,.png"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0] || null;
+                          if (!file) return setDamageDraft(prev => ({ ...prev, fotoRusakFile: null }));
+                          if (!validatePickedFile(file, { allowedMimeTypes: ['image/jpeg', 'image/png', 'image/jpg'], maxBytes: MAX_UPLOAD_BYTES, label: 'Upload foto perangkat rusak' })) return;
+                          setDamageDraft(prev => ({ ...prev, fotoRusakFile: file }));
+                        }}
                       />
                     </label>
+                    <p className="mt-2 text-[10px] font-bold text-slate-400">Format: JPG/JPEG/PNG • Maks 2MB</p>
                   </div>
 
                   {damageSuccess && (
@@ -2562,10 +2879,16 @@ function App() {
                       <input
                         type="file"
                         className="hidden"
-                        accept="image/*,application/pdf"
-                        onChange={(e) => setDeviceRequestDraft(prev => ({ ...prev, suratFile: e.target.files?.[0] || null }))}
+                        accept="application/pdf,.pdf"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0] || null;
+                          if (!file) return setDeviceRequestDraft(prev => ({ ...prev, suratFile: null }));
+                          if (!validatePickedFile(file, { allowedMimeTypes: ['application/pdf'], maxBytes: MAX_UPLOAD_BYTES, label: 'Upload surat permintaan perangkat' })) return;
+                          setDeviceRequestDraft(prev => ({ ...prev, suratFile: file }));
+                        }}
                       />
                     </label>
+                    <p className="mt-2 text-[10px] font-bold text-slate-400">Format: PDF • Maks 2MB</p>
                   </div>
 
                   <div>
@@ -2686,7 +3009,7 @@ function App() {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="border border-slate-100 rounded-3xl p-5">
-                    <div className="grid grid-cols-2 bg-slate-50 border border-slate-200 rounded-2xl p-1 mb-5">
+                    <div className="grid grid-cols-3 bg-slate-50 border border-slate-200 rounded-2xl p-1 mb-5">
                       <button
                         onClick={async () => { setInboxTab('damage_report'); setActiveInboxMessage(null); await fetchInboxItems('damage_report', 'all'); }}
                         className={`py-2 rounded-xl text-xs font-black transition-all ${inboxTab === 'damage_report' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
@@ -2699,19 +3022,62 @@ function App() {
                       >
                         Permintaan Perangkat
                       </button>
+                      <button
+                        onClick={() => { setInboxTab('downloads'); setActiveInboxMessage(null); setMessageDirectory(prev => cleanupMessageDirectory(prev)); }}
+                        className={`py-2 rounded-xl text-xs font-black transition-all ${inboxTab === 'downloads' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
+                      >
+                        Direktori Pesan
+                      </button>
                     </div>
 
                     <div className="flex items-center justify-between mb-4">
                       <p className="text-sm font-black text-slate-900">Daftar Pesan</p>
                       <button
-                        onClick={async () => { await fetchInboxItems(inboxTab, 'all'); refreshUnreadInboxCount(); }}
+                        onClick={async () => { if (inboxTab !== 'downloads') { await fetchInboxItems(inboxTab, 'all'); refreshUnreadInboxCount(); } else { setMessageDirectory(prev => cleanupMessageDirectory(prev)); } }}
                         className="px-3 py-2 rounded-2xl bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-black"
                       >
                         Refresh
                       </button>
                     </div>
 
-                    {inboxLoading ? (
+                    {inboxTab === 'downloads' ? (
+                      <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
+                        {messageDirectory.length === 0 ? (
+                          <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-sm font-bold text-slate-600">
+                            Direktori kosong.
+                          </div>
+                        ) : (
+                          messageDirectory.map(item => (
+                            <div key={item.id} className="bg-white border border-slate-200 rounded-2xl px-4 py-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <p className="text-sm font-black text-slate-900 truncate">{item.fileName}</p>
+                                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">
+                                    {item.kind.toUpperCase()} • {item.samsat} • {new Date(item.createdAt).toLocaleString()}
+                                  </p>
+                                  <p className="text-[10px] font-bold text-slate-400 mt-1">Hapus otomatis: {new Date(item.expiresAt).toLocaleString()}</p>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <button
+                                    onClick={() => downloadMessageDirectoryItem(item)}
+                                    className="px-3 py-2 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black"
+                                  >
+                                    Download
+                                  </button>
+                                  <button
+                                    onClick={() => deleteMessageDirectoryItem(item.id)}
+                                    className="p-2 rounded-2xl bg-slate-50 hover:bg-rose-50 text-rose-600"
+                                    aria-label="Hapus file"
+                                  >
+                                    <Trash2 className="w-5 h-5" />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    ) : inboxLoading ? (
                       <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-sm font-bold text-slate-600">
                         Memuat pesan...
                       </div>
@@ -2757,6 +3123,29 @@ function App() {
                         const p = activeInboxMessage.payload as DamageReportPayload;
                         return (
                           <div className="space-y-4">
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                              <button
+                                onClick={() => downloadInboxMessagePdf(activeInboxMessage)}
+                                className="bg-slate-900 hover:bg-slate-950 text-white py-3 rounded-2xl font-black text-xs"
+                              >
+                                Download PDF
+                              </button>
+                              <button
+                                onClick={() => { if (p.kwitansiBuktiPerbaikan) downloadDamageAttachmentPdf(activeInboxMessage, 'kwitansi', p.kwitansiBuktiPerbaikan); }}
+                                disabled={!p.kwitansiBuktiPerbaikan}
+                                className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-900 py-3 rounded-2xl font-black text-xs disabled:opacity-40"
+                              >
+                                Download Kwitansi (PDF)
+                              </button>
+                              <button
+                                onClick={() => { if (p.fotoPerangkatRusak) downloadDamageAttachmentPdf(activeInboxMessage, 'foto', p.fotoPerangkatRusak); }}
+                                disabled={!p.fotoPerangkatRusak}
+                                className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-900 py-3 rounded-2xl font-black text-xs disabled:opacity-40"
+                              >
+                                Download Foto (PDF)
+                              </button>
+                            </div>
+
                             <div className="grid grid-cols-1 gap-3">
                               <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3">
                                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Kerusakan Perangkat</p>
@@ -2778,6 +3167,12 @@ function App() {
                                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Perbaikan Mandiri</p>
                                 <p className="text-sm font-bold text-slate-900 mt-1">{p.perbaikanMandiri}</p>
                               </div>
+                              {p.perbaikanMandiri === 'Belum' ? (
+                                <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3">
+                                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Alasan Belum Melaksanakan Perbaikan Secara Mandiri</p>
+                                  <p className="text-sm font-bold text-slate-900 mt-1 whitespace-pre-wrap">{p.alasanBelumMelaksanakanPerbaikanMandiri || '-'}</p>
+                                </div>
+                              ) : null}
                             </div>
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -2820,6 +3215,22 @@ function App() {
                             : `${Number(p.jumlahPermintaan || 0)}`;
                         return (
                           <div className="space-y-4">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                              <button
+                                onClick={() => downloadInboxMessagePdf(activeInboxMessage)}
+                                className="bg-slate-900 hover:bg-slate-950 text-white py-3 rounded-2xl font-black text-xs"
+                              >
+                                Download PDF
+                              </button>
+                              <button
+                                onClick={() => { if (p.suratPermintaan) downloadSuratPdf(activeInboxMessage, p.suratPermintaan); }}
+                                disabled={!p.suratPermintaan}
+                                className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-900 py-3 rounded-2xl font-black text-xs disabled:opacity-40"
+                              >
+                                Download Surat (PDF)
+                              </button>
+                            </div>
+
                             <div className="grid grid-cols-1 gap-3">
                               <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3">
                                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Untuk Layanan</p>
