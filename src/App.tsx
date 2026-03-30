@@ -555,6 +555,8 @@ function App() {
 
   const [devices, setDevices] = useState<Device[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dbAvailable, setDbAvailable] = useState(false);
+  const [dbNeedsImport, setDbNeedsImport] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
   
@@ -1317,7 +1319,7 @@ function App() {
     setRequestDraft(next);
   };
 
-  const deleteDevice = (device: Device) => {
+  const deleteDevice = async (device: Device) => {
     if (strictSheetSync) return;
     if (!isAdmin) {
       window.alert('Akses terbatas. Hanya Super Admin yang dapat menghapus perangkat.');
@@ -1328,6 +1330,15 @@ function App() {
 
     setSelectedDevice(prev => (prev?.id === device.id ? null : prev));
     setDevices(prev => prev.filter(d => d.id !== device.id));
+
+    if (dbAvailable) {
+      try {
+        await axios.post('/api/devices', { action: 'delete', id: device.id }, { timeout: 8000 });
+      } catch {
+        window.alert('Gagal menghapus perangkat di database.');
+      }
+      return;
+    }
 
     const deleted = new Set(loadDeletedDeviceIds());
     deleted.add(device.id);
@@ -1368,7 +1379,7 @@ function App() {
     return Math.min(kabidCount, sekbanCount, requested);
   };
 
-  const addRequestedDevice = () => {
+  const addRequestedDevice = async () => {
     if (strictSheetSync) return;
     if (!isAdmin) return;
     if (!requestDraft || !activeSamsat) return;
@@ -1407,12 +1418,35 @@ function App() {
       sheetName: 'Manual'
     };
 
-    const added = loadAddedDevices();
-    const deleted = new Set(loadDeletedDeviceIds());
-    deleted.delete(device.id);
-    saveDeletedDeviceIds(Array.from(deleted));
-    saveAddedDevices([device, ...added]);
-    setDevices(prev => [device, ...prev]);
+    if (dbAvailable) {
+      try {
+        await axios.post('/api/devices', {
+          action: 'create',
+          payload: {
+            id: device.id,
+            samsat: device.samsat,
+            name: device.name,
+            category: device.category,
+            serviceUnit: device.serviceUnit,
+            serialNumber: device.serialNumber,
+            phoneNumber: device.phoneNumber,
+            subLocation: device.subLocation || '',
+            condition: device.condition
+          }
+        }, { timeout: 8000 });
+        setDevices(prev => [device, ...prev]);
+      } catch {
+        window.alert('Gagal menambah perangkat ke database.');
+        return;
+      }
+    } else {
+      const added = loadAddedDevices();
+      const deleted = new Set(loadDeletedDeviceIds());
+      deleted.delete(device.id);
+      saveDeletedDeviceIds(Array.from(deleted));
+      saveAddedDevices([device, ...added]);
+      setDevices(prev => [device, ...prev]);
+    }
 
     const nextReq: DeviceRequest = { ...requestDraft, addedDeviceIds: [...requestDraft.addedDeviceIds, device.id] };
     const nextRemaining = approvedCount - nextReq.addedDeviceIds.length;
@@ -1455,6 +1489,53 @@ function App() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
+      try {
+        const res = await axios.get('/api/devices?limit=500', { timeout: 8000 });
+        const itemsRaw = (res.data?.items || []) as Array<{
+          id: string;
+          samsat: string;
+          name: string;
+          category: string;
+          serviceUnit: string;
+          serialNumber: string;
+          phoneNumber: string;
+          subLocation?: string;
+          condition: string;
+        }>;
+
+        setDbAvailable(true);
+        setDbNeedsImport(itemsRaw.length === 0);
+
+        const savedPhotos = safeParseJSON<Record<string, string>>(localStorage.getItem('samsat_device_photos'), {});
+        const finalDevices: Device[] = itemsRaw.map(d => {
+          const photo = savedPhotos[d.id];
+          const serial = String(d.serialNumber || '').trim();
+          const phone = String(d.phoneNumber || '').trim();
+          const dataComplete = normalizeFilled(serial) && normalizeFilled(phone);
+          return {
+            id: d.id,
+            name: d.name,
+            category: d.category,
+            location: d.samsat,
+            subLocation: d.subLocation || 'Staff',
+            serialNumber: d.serialNumber,
+            phoneNumber: d.phoneNumber,
+            condition: d.condition,
+            photo,
+            isComplete: !!photo,
+            dataComplete,
+            samsat: d.samsat,
+            serviceUnit: d.serviceUnit,
+            sheetName: 'DB'
+          };
+        });
+        setDevices(finalDevices);
+        return;
+      } catch {
+        setDbAvailable(false);
+        setDbNeedsImport(false);
+      }
+
       const baseUrl = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRqd9Fuc8MRfwWgzB5TJ-8trqSCerRy5-mbzhy-wJo_faoLLe9JItOxyKXBJ2A9l8MpFoswgpTxfxN1/pub?output=csv&gid=';
       
       const fallbackSheets = [
@@ -1559,6 +1640,19 @@ function App() {
     }
   }, []);
 
+  const importSheetsToDb = useCallback(async () => {
+    if (!isAdmin) return;
+    setLoading(true);
+    try {
+      await axios.post('/api/devices', { action: 'importSheets' }, { timeout: 20000 });
+      await fetchData();
+    } catch (e) {
+      window.alert('Gagal impor ke database.');
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchData, isAdmin]);
+
   useEffect(() => {
     fetchData();
   }, [fetchData]);
@@ -1584,7 +1678,7 @@ function App() {
     }
   };
 
-  const handleUpdateDevice = () => {
+  const handleUpdateDevice = async () => {
     if (strictSheetSync) return;
     if (!isAdmin) return;
     if (!selectedDevice || !editForm.id) return;
@@ -1609,7 +1703,28 @@ function App() {
     setSelectedDevice(finalUpdatedData as Device);
     setIsEditing(false);
     
-    // Save to LocalStorage to persist changes (since Google Sheets is read-only)
+    if (dbAvailable) {
+      try {
+        await axios.post('/api/devices', {
+          action: 'update',
+          payload: {
+            id: updatedDeviceId,
+            samsat: String(finalUpdatedData.samsat || finalUpdatedData.location || '').trim(),
+            name: String(finalUpdatedData.name || '').trim(),
+            category: String(finalUpdatedData.category || '').trim(),
+            serviceUnit: String(finalUpdatedData.serviceUnit || '').trim(),
+            serialNumber: String(finalUpdatedData.serialNumber || '').trim(),
+            phoneNumber: String(finalUpdatedData.phoneNumber || '').trim(),
+            subLocation: String(finalUpdatedData.subLocation || '').trim(),
+            condition: String(finalUpdatedData.condition || '').trim()
+          }
+        }, { timeout: 8000 });
+      } catch {
+        window.alert('Gagal menyimpan perubahan ke database.');
+      }
+      return;
+    }
+
     const updatedDevices = JSON.parse(localStorage.getItem('samsat_updated_devices') || '{}');
     updatedDevices[updatedDeviceId] = {
       name: updatedData.name,
@@ -2038,6 +2153,21 @@ function App() {
         <div className="p-4 sm:p-8 space-y-6 sm:space-y-8">
           {viewMode === 'selection' ? (
             <div className="space-y-6">
+              {dbAvailable && dbNeedsImport && isAdmin ? (
+                <div className="bg-amber-50 border border-amber-100 rounded-[2rem] p-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-black text-slate-900">Database kosong</p>
+                    <p className="text-xs font-bold text-slate-600 mt-1">Impor data awal dari Google Sheets ke database agar aplikasi menjadi master.</p>
+                  </div>
+                  <button
+                    onClick={importSheetsToDb}
+                    disabled={loading}
+                    className="px-6 py-3 rounded-2xl bg-slate-900 hover:bg-slate-950 text-white font-black text-sm disabled:bg-slate-200 disabled:text-slate-500"
+                  >
+                    Impor ke Database
+                  </button>
+                </div>
+              ) : null}
               {samsatList.length > 0 ? (
                 <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
                   {samsatList.map((samsat, i) => (
