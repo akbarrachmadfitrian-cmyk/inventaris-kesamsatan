@@ -82,6 +82,18 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
     return json({ ok: true, deleted: 1 }, { status: 200 })
   }
 
+  if (action === 'update') {
+    const id = String(data.id || '').trim()
+    const payload = data.payload
+    if (!id) return json({ error: 'id wajib diisi' }, { status: 400 })
+    if (!payload || typeof payload !== 'object') return json({ error: 'payload wajib diisi' }, { status: 400 })
+    const key = `msg:${id}`
+    const msg = await env.INBOX_KV.get<InboxMessage>(key, 'json')
+    if (!msg) return json({ error: 'pesan tidak ditemukan' }, { status: 404 })
+    await env.INBOX_KV.put(key, JSON.stringify({ ...msg, payload }))
+    return json({ ok: true }, { status: 200 })
+  }
+
   if (action === 'markRead') {
     const idsRaw = data.ids
     const ids = Array.isArray(idsRaw) ? idsRaw.map(v => String(v)) : []

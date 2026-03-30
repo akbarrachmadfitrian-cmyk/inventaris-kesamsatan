@@ -6,7 +6,7 @@ import {
   Monitor, Printer, LayoutDashboard, ChevronRight,
   Building2, Layers, XCircle, AlertTriangle,
   Trash2, Plus, FileUp, Clock3,
-  ChevronDown, List, KeyRound, Inbox, Send
+  ChevronDown, List, KeyRound, Inbox, Send, Pencil
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -580,6 +580,28 @@ function App() {
   const [unreadInboxCount, setUnreadInboxCount] = useState(0);
   const [activeInboxMessage, setActiveInboxMessage] = useState<InboxMessage | null>(null);
   const [messageDirectory, setMessageDirectory] = useState<MessageDirectoryItem[]>(() => cleanupMessageDirectory(loadMessageDirectory()));
+  const [isInboxEditOpen, setIsInboxEditOpen] = useState(false);
+  const [inboxEditMessage, setInboxEditMessage] = useState<InboxMessage | null>(null);
+  const [inboxEditSaving, setInboxEditSaving] = useState(false);
+  const [inboxEditDamageDraft, setInboxEditDamageDraft] = useState<{
+    kerusakanPerangkat: string;
+    layananRusak: string;
+    jenisMerkSnPerangkatRusak: string;
+    namaDanKontakPengguna: string;
+    perbaikanMandiri: 'Sudah' | 'Belum';
+    alasanBelumMelaksanakanPerbaikanMandiri: string;
+    kwitansiFile: File | null;
+    fotoRusakFile: File | null;
+  } | null>(null);
+  const [inboxEditRequestDraft, setInboxEditRequestDraft] = useState<{
+    suratFile: File | null;
+    untukLayanan: string;
+    kebutuhanPerangkat: 'PC KESAMSATAN' | 'PRINTER KESAMSATAN' | 'PC & PRINTER KESAMSATAN';
+    jumlahPermintaan: number | null;
+    jumlahPermintaanPC: number | null;
+    jumlahPermintaanPrinter: number | null;
+    alasanPermintaan: string;
+  } | null>(null);
 
   const [isDamageReportOpen, setIsDamageReportOpen] = useState(false);
   const [damageSending, setDamageSending] = useState(false);
@@ -750,6 +772,185 @@ function App() {
     setActiveInboxMessage(prev => (prev?.id === msg.id ? null : prev));
     setMessageDirectory(prev => cleanupMessageDirectory(prev.filter(i => i.inboxMessageId !== msg.id)));
     refreshUnreadInboxCount();
+  };
+
+  const openInboxEdit = (msg: InboxMessage) => {
+    setInboxEditMessage(msg);
+    setInboxEditSaving(false);
+    if (msg.kind === 'damage_report') {
+      const p = msg.payload as DamageReportPayload;
+      setInboxEditRequestDraft(null);
+      setInboxEditDamageDraft({
+        kerusakanPerangkat: p.kerusakanPerangkat || '',
+        layananRusak: p.layananRusak || '',
+        jenisMerkSnPerangkatRusak: p.jenisMerkSnPerangkatRusak || '',
+        namaDanKontakPengguna: p.namaDanKontakPengguna || '',
+        perbaikanMandiri: p.perbaikanMandiri || 'Belum',
+        alasanBelumMelaksanakanPerbaikanMandiri: p.alasanBelumMelaksanakanPerbaikanMandiri || '',
+        kwitansiFile: null,
+        fotoRusakFile: null
+      });
+    } else {
+      const p = msg.payload as DeviceRequestSubmissionPayload;
+      setInboxEditDamageDraft(null);
+      setInboxEditRequestDraft({
+        suratFile: null,
+        untukLayanan: p.untukLayanan || '',
+        kebutuhanPerangkat: p.kebutuhanPerangkat || 'PC KESAMSATAN',
+        jumlahPermintaan: p.jumlahPermintaan ?? null,
+        jumlahPermintaanPC: p.jumlahPermintaanPC ?? null,
+        jumlahPermintaanPrinter: p.jumlahPermintaanPrinter ?? null,
+        alasanPermintaan: p.alasanPermintaan || ''
+      });
+    }
+    setIsInboxEditOpen(true);
+  };
+
+  const closeInboxEdit = () => {
+    if (inboxEditSaving) return;
+    setIsInboxEditOpen(false);
+    setInboxEditMessage(null);
+    setInboxEditDamageDraft(null);
+    setInboxEditRequestDraft(null);
+  };
+
+  const updateInboxMessage = async (id: string, payload: DamageReportPayload | DeviceRequestSubmissionPayload) => {
+    try {
+      await axios.post('/api/inbox', { action: 'update', id, payload }, { timeout: 8000 });
+    } catch {
+      const next = loadInboxMessages().map(m => (m.id === id ? { ...m, payload } : m));
+      saveInboxMessages(next);
+    }
+  };
+
+  const saveInboxEdit = async () => {
+    if (!inboxEditMessage) return;
+    setInboxEditSaving(true);
+    try {
+      if (inboxEditMessage.kind === 'damage_report') {
+        const draft = inboxEditDamageDraft;
+        if (!draft) return;
+
+        const existing = inboxEditMessage.payload as DamageReportPayload;
+        const kerusakanPerangkat = draft.kerusakanPerangkat.trim();
+        const layananRusak = draft.layananRusak.trim();
+        const jenisMerkSnPerangkatRusak = draft.jenisMerkSnPerangkatRusak.trim();
+        const namaDanKontakPengguna = draft.namaDanKontakPengguna.trim();
+        const alasan = draft.alasanBelumMelaksanakanPerbaikanMandiri.trim();
+
+        if (!kerusakanPerangkat || !layananRusak || !jenisMerkSnPerangkatRusak || !namaDanKontakPengguna) {
+          window.alert('Lengkapi seluruh kolom wajib.');
+          return;
+        }
+        if (draft.perbaikanMandiri === 'Belum' && !alasan) {
+          window.alert('Kolom alasan wajib diisi jika memilih "Belum".');
+          return;
+        }
+
+        let fotoAtt = existing.fotoPerangkatRusak;
+        if (draft.fotoRusakFile) {
+          if (!validatePickedFile(draft.fotoRusakFile, { allowedMimeTypes: ['image/jpeg', 'image/png', 'image/jpg'], maxBytes: MAX_UPLOAD_BYTES, label: 'Upload foto perangkat rusak' })) {
+            return;
+          }
+          fotoAtt = await readFileAsAttachment(draft.fotoRusakFile);
+        }
+        if (!fotoAtt) {
+          window.alert('Foto perangkat rusak wajib ada.');
+          return;
+        }
+
+        let kwitansiAtt: InboxAttachment | null = existing.kwitansiBuktiPerbaikan;
+        if (draft.perbaikanMandiri === 'Sudah') {
+          if (draft.kwitansiFile) {
+            if (!validatePickedFile(draft.kwitansiFile, { allowedMimeTypes: ['image/jpeg', 'image/png', 'image/jpg'], maxBytes: MAX_UPLOAD_BYTES, label: 'Upload foto kwitansi bukti perbaikan' })) {
+              return;
+            }
+            kwitansiAtt = await readFileAsAttachment(draft.kwitansiFile);
+          }
+          if (!kwitansiAtt) {
+            window.alert('Kwitansi wajib ada jika memilih "Sudah".');
+            return;
+          }
+        } else {
+          kwitansiAtt = null;
+        }
+
+        const payload: DamageReportPayload = {
+          kerusakanPerangkat,
+          layananRusak,
+          jenisMerkSnPerangkatRusak,
+          namaDanKontakPengguna,
+          perbaikanMandiri: draft.perbaikanMandiri,
+          alasanBelumMelaksanakanPerbaikanMandiri: draft.perbaikanMandiri === 'Belum' ? alasan : null,
+          kwitansiBuktiPerbaikan: kwitansiAtt,
+          fotoPerangkatRusak: fotoAtt
+        };
+
+        await updateInboxMessage(inboxEditMessage.id, payload);
+        setInboxItems(prev => prev.map(m => (m.id === inboxEditMessage.id ? { ...m, payload } : m)));
+        setActiveInboxMessage(prev => (prev?.id === inboxEditMessage.id ? { ...prev, payload } : prev));
+        setInboxEditMessage(prev => (prev?.id === inboxEditMessage.id ? { ...prev, payload } : prev));
+        setIsInboxEditOpen(false);
+      } else {
+        const draft = inboxEditRequestDraft;
+        if (!draft) return;
+
+        const existing = inboxEditMessage.payload as DeviceRequestSubmissionPayload;
+        const untukLayanan = draft.untukLayanan.trim();
+        const alasanPermintaan = draft.alasanPermintaan.trim();
+        if (!untukLayanan || !alasanPermintaan) {
+          window.alert('Lengkapi seluruh kolom wajib.');
+          return;
+        }
+
+        const kebutuhan = draft.kebutuhanPerangkat;
+        const pc = Math.max(0, Number(draft.jumlahPermintaanPC || 0));
+        const printer = Math.max(0, Number(draft.jumlahPermintaanPrinter || 0));
+        const total = Math.max(0, Number(draft.jumlahPermintaan || 0));
+
+        if (kebutuhan === 'PC & PRINTER KESAMSATAN') {
+          if (pc <= 0 && printer <= 0) {
+            window.alert('Isi jumlah permintaan PC dan/atau PRINTER.');
+            return;
+          }
+        } else {
+          if (total <= 0) {
+            window.alert('Isi jumlah permintaan perangkat.');
+            return;
+          }
+        }
+
+        let suratAtt: InboxAttachment | null = existing.suratPermintaan;
+        if (draft.suratFile) {
+          if (!validatePickedFile(draft.suratFile, { allowedMimeTypes: ['application/pdf'], maxBytes: MAX_UPLOAD_BYTES, label: 'Upload surat permintaan perangkat' })) {
+            return;
+          }
+          suratAtt = await readFileAsAttachment(draft.suratFile);
+        }
+        if (!suratAtt) {
+          window.alert('Surat permintaan wajib ada.');
+          return;
+        }
+
+        const payload: DeviceRequestSubmissionPayload = {
+          suratPermintaan: suratAtt,
+          untukLayanan,
+          kebutuhanPerangkat: draft.kebutuhanPerangkat,
+          jumlahPermintaan: kebutuhan === 'PC & PRINTER KESAMSATAN' ? null : total,
+          jumlahPermintaanPC: kebutuhan === 'PC & PRINTER KESAMSATAN' ? pc : null,
+          jumlahPermintaanPrinter: kebutuhan === 'PC & PRINTER KESAMSATAN' ? printer : null,
+          alasanPermintaan
+        };
+
+        await updateInboxMessage(inboxEditMessage.id, payload);
+        setInboxItems(prev => prev.map(m => (m.id === inboxEditMessage.id ? { ...m, payload } : m)));
+        setActiveInboxMessage(prev => (prev?.id === inboxEditMessage.id ? { ...prev, payload } : prev));
+        setInboxEditMessage(prev => (prev?.id === inboxEditMessage.id ? { ...prev, payload } : prev));
+        setIsInboxEditOpen(false);
+      }
+    } finally {
+      setInboxEditSaving(false);
+    }
   };
 
   const openInbox = async () => {
@@ -3143,6 +3344,13 @@ function App() {
                                     <span className="w-3 h-3 rounded-full bg-rose-600 mt-1 shrink-0" />
                                   )}
                                   <button
+                                    onClick={() => openInboxEdit(m)}
+                                    className="p-2 rounded-2xl bg-slate-50 hover:bg-slate-100 text-slate-700 transition-colors"
+                                    aria-label="Edit pesan"
+                                  >
+                                    <Pencil className="w-5 h-5" />
+                                  </button>
+                                  <button
                                     onClick={() => deleteInboxMessage(m)}
                                     className="p-2 rounded-2xl bg-slate-50 hover:bg-rose-50 text-rose-600 transition-colors"
                                     aria-label="Hapus pesan"
@@ -3314,6 +3522,259 @@ function App() {
                       })()
                     )}
                   </div>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isInboxEditOpen && inboxEditMessage && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[3rem] w-full max-w-3xl max-h-[calc(100vh-2rem)] overflow-hidden shadow-2xl relative"
+            >
+              <button onClick={closeInboxEdit} disabled={inboxEditSaving} className="absolute top-8 right-8 p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl z-20 disabled:opacity-40">
+                <XCircle className="w-6 h-6 text-slate-400" />
+              </button>
+
+              <div className="p-6 md:p-10 overflow-y-auto max-h-[calc(100vh-2rem)]">
+                <div className="mb-6">
+                  <h3 className="text-xl font-black text-slate-900">Edit Pesan Masuk</h3>
+                  <p className="text-xs text-slate-500 font-bold mt-1">
+                    Nomor Tiket: {inboxEditMessage.id} • {inboxEditMessage.kind === 'damage_report' ? 'Laporan Kerusakan' : 'Permintaan Perangkat'} • {inboxEditMessage.samsat}
+                  </p>
+                </div>
+
+                {inboxEditMessage.kind === 'damage_report' && inboxEditDamageDraft ? (
+                  (() => {
+                    const existing = inboxEditMessage.payload as DamageReportPayload;
+                    const draft = inboxEditDamageDraft;
+                    return (
+                      <div className="space-y-4">
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Kerusakan Perangkat</label>
+                          <textarea
+                            value={draft.kerusakanPerangkat}
+                            onChange={(e) => setInboxEditDamageDraft(prev => (prev ? { ...prev, kerusakanPerangkat: e.target.value } : prev))}
+                            className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 min-h-[90px]"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Layanan yang Rusak</label>
+                          <input
+                            value={draft.layananRusak}
+                            onChange={(e) => setInboxEditDamageDraft(prev => (prev ? { ...prev, layananRusak: e.target.value } : prev))}
+                            className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Jenis/Merk/SN Perangkat Rusak</label>
+                          <input
+                            value={draft.jenisMerkSnPerangkatRusak}
+                            onChange={(e) => setInboxEditDamageDraft(prev => (prev ? { ...prev, jenisMerkSnPerangkatRusak: e.target.value } : prev))}
+                            className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Nama dan Kontak Pengguna</label>
+                          <input
+                            value={draft.namaDanKontakPengguna}
+                            onChange={(e) => setInboxEditDamageDraft(prev => (prev ? { ...prev, namaDanKontakPengguna: e.target.value } : prev))}
+                            className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                            placeholder="Nama - No HP"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Perbaikan Mandiri</label>
+                            <select
+                              value={draft.perbaikanMandiri}
+                              onChange={(e) => setInboxEditDamageDraft(prev => (prev ? { ...prev, perbaikanMandiri: e.target.value as 'Sudah' | 'Belum' } : prev))}
+                              className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-black text-slate-900"
+                            >
+                              <option value="Belum">Belum</option>
+                              <option value="Sudah">Sudah</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Foto Perangkat Rusak (Opsional Ganti)</label>
+                            <label className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 flex items-center justify-center gap-2 font-black text-sm text-slate-700 hover:bg-slate-50 cursor-pointer">
+                              <Upload className="w-5 h-5 text-slate-500" />
+                              <span>{draft.fotoRusakFile ? draft.fotoRusakFile.name : existing.fotoPerangkatRusak?.fileName || 'Pilih Foto'}</span>
+                              <input
+                                type="file"
+                                className="hidden"
+                                accept="image/jpeg,image/png,.jpg,.jpeg,.png"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0] || null;
+                                  if (!file) return setInboxEditDamageDraft(prev => (prev ? { ...prev, fotoRusakFile: null } : prev));
+                                  if (!validatePickedFile(file, { allowedMimeTypes: ['image/jpeg', 'image/png', 'image/jpg'], maxBytes: MAX_UPLOAD_BYTES, label: 'Upload foto perangkat rusak' })) return;
+                                  setInboxEditDamageDraft(prev => (prev ? { ...prev, fotoRusakFile: file } : prev));
+                                }}
+                              />
+                            </label>
+                            <p className="mt-2 text-[10px] font-bold text-slate-400">Format: JPG/JPEG/PNG • Maks 2MB</p>
+                          </div>
+                        </div>
+
+                        {draft.perbaikanMandiri === 'Belum' ? (
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Alasan belum melaksanakan perbaikan secara mandiri <span className="text-rose-600 font-black">*</span></label>
+                            <textarea
+                              value={draft.alasanBelumMelaksanakanPerbaikanMandiri}
+                              onChange={(e) => setInboxEditDamageDraft(prev => (prev ? { ...prev, alasanBelumMelaksanakanPerbaikanMandiri: e.target.value } : prev))}
+                              className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 min-h-[90px]"
+                            />
+                          </div>
+                        ) : (
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Kwitansi Bukti Perbaikan (Opsional Ganti)</label>
+                            <label className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 flex items-center justify-center gap-2 font-black text-sm text-slate-700 hover:bg-slate-50 cursor-pointer">
+                              <FileUp className="w-5 h-5 text-slate-500" />
+                              <span>{draft.kwitansiFile ? draft.kwitansiFile.name : existing.kwitansiBuktiPerbaikan?.fileName || 'Pilih Foto Kwitansi'}</span>
+                              <input
+                                type="file"
+                                className="hidden"
+                                accept="image/jpeg,image/png,.jpg,.jpeg,.png"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0] || null;
+                                  if (!file) return setInboxEditDamageDraft(prev => (prev ? { ...prev, kwitansiFile: null } : prev));
+                                  if (!validatePickedFile(file, { allowedMimeTypes: ['image/jpeg', 'image/png', 'image/jpg'], maxBytes: MAX_UPLOAD_BYTES, label: 'Upload foto kwitansi bukti perbaikan' })) return;
+                                  setInboxEditDamageDraft(prev => (prev ? { ...prev, kwitansiFile: file } : prev));
+                                }}
+                              />
+                            </label>
+                            <p className="mt-2 text-[10px] font-bold text-slate-400">Format: JPG/JPEG/PNG • Maks 2MB</p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()
+                ) : inboxEditMessage.kind === 'device_request' && inboxEditRequestDraft ? (
+                  (() => {
+                    const existing = inboxEditMessage.payload as DeviceRequestSubmissionPayload;
+                    const draft = inboxEditRequestDraft;
+                    return (
+                      <div className="space-y-4">
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Upload Surat Permintaan (Opsional Ganti)</label>
+                          <label className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 flex items-center justify-center gap-2 font-black text-sm text-slate-700 hover:bg-slate-50 cursor-pointer">
+                            <FileUp className="w-5 h-5 text-slate-500" />
+                            <span>{draft.suratFile ? draft.suratFile.name : existing.suratPermintaan?.fileName || 'Pilih PDF'}</span>
+                            <input
+                              type="file"
+                              className="hidden"
+                              accept="application/pdf,.pdf"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0] || null;
+                                if (!file) return setInboxEditRequestDraft(prev => (prev ? { ...prev, suratFile: null } : prev));
+                                if (!validatePickedFile(file, { allowedMimeTypes: ['application/pdf'], maxBytes: MAX_UPLOAD_BYTES, label: 'Upload surat permintaan perangkat' })) return;
+                                setInboxEditRequestDraft(prev => (prev ? { ...prev, suratFile: file } : prev));
+                              }}
+                            />
+                          </label>
+                          <p className="mt-2 text-[10px] font-bold text-slate-400">Format: PDF • Maks 2MB</p>
+                        </div>
+
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Untuk Layanan <span className="text-rose-600 font-black">*</span></label>
+                          <input
+                            value={draft.untukLayanan}
+                            onChange={(e) => setInboxEditRequestDraft(prev => (prev ? { ...prev, untukLayanan: e.target.value } : prev))}
+                            className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Kebutuhan Perangkat</label>
+                            <select
+                              value={draft.kebutuhanPerangkat}
+                              onChange={(e) => setInboxEditRequestDraft(prev => prev ? ({
+                                ...prev,
+                                kebutuhanPerangkat: e.target.value as DeviceRequestSubmissionPayload['kebutuhanPerangkat'],
+                                jumlahPermintaan: null,
+                                jumlahPermintaanPC: null,
+                                jumlahPermintaanPrinter: null
+                              }) : prev)}
+                              className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-black text-slate-900"
+                            >
+                              <option value="PC KESAMSATAN">PC KESAMSATAN</option>
+                              <option value="PRINTER KESAMSATAN">PRINTER KESAMSATAN</option>
+                              <option value="PC & PRINTER KESAMSATAN">PC & PRINTER KESAMSATAN</option>
+                            </select>
+                          </div>
+                          {draft.kebutuhanPerangkat === 'PC & PRINTER KESAMSATAN' ? (
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Permintaan PC</label>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  value={draft.jumlahPermintaanPC ?? ''}
+                                  onChange={(e) => setInboxEditRequestDraft(prev => prev ? { ...prev, jumlahPermintaanPC: e.target.value === '' ? null : Math.max(0, Number(e.target.value)) } : prev)}
+                                  className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-black text-slate-900"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Permintaan Printer</label>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  value={draft.jumlahPermintaanPrinter ?? ''}
+                                  onChange={(e) => setInboxEditRequestDraft(prev => prev ? { ...prev, jumlahPermintaanPrinter: e.target.value === '' ? null : Math.max(0, Number(e.target.value)) } : prev)}
+                                  className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-black text-slate-900"
+                                />
+                              </div>
+                            </div>
+                          ) : (
+                            <div>
+                              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Jumlah Permintaan</label>
+                              <input
+                                type="number"
+                                min={0}
+                                value={draft.jumlahPermintaan ?? ''}
+                                onChange={(e) => setInboxEditRequestDraft(prev => prev ? { ...prev, jumlahPermintaan: e.target.value === '' ? null : Math.max(0, Number(e.target.value)) } : prev)}
+                                className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-black text-slate-900"
+                              />
+                            </div>
+                          )}
+                        </div>
+
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Alasan Permintaan Perangkat <span className="text-rose-600 font-black">*</span></label>
+                          <textarea
+                            value={draft.alasanPermintaan}
+                            onChange={(e) => setInboxEditRequestDraft(prev => (prev ? { ...prev, alasanPermintaan: e.target.value } : prev))}
+                            className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 min-h-[90px]"
+                          />
+                        </div>
+                      </div>
+                    );
+                  })()
+                ) : null}
+
+                <div className="flex gap-4 pt-6">
+                  <button
+                    onClick={saveInboxEdit}
+                    disabled={inboxEditSaving}
+                    className="flex-grow bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl font-black transition-all shadow-lg shadow-blue-200 disabled:bg-slate-200 disabled:text-slate-500"
+                  >
+                    Simpan Perubahan
+                  </button>
+                  <button
+                    onClick={closeInboxEdit}
+                    disabled={inboxEditSaving}
+                    className="px-8 bg-slate-100 hover:bg-slate-200 text-slate-600 py-4 rounded-2xl font-black transition-all disabled:opacity-40"
+                  >
+                    Batal
+                  </button>
                 </div>
               </div>
             </motion.div>
