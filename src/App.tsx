@@ -708,6 +708,8 @@ function App() {
   };
 
   const logout = () => {
+    const ok = window.confirm('apakah anda yakin akan keluar?');
+    if (!ok) return;
     setSession(null);
     clearAuthSession();
     setAuthTab('admin');
