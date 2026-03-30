@@ -29,6 +29,7 @@ interface D1PreparedStatement {
 
 interface D1Database {
   prepare(query: string): D1PreparedStatement
+  batch<T = unknown>(statements: D1PreparedStatement[]): Promise<T[]>
 }
 
 interface Env {
@@ -342,28 +343,43 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
 
     const now = nowIso()
     let upserted = 0
-    for (const d of allDevices) {
-      const samsatId = await ensureSamsat(env.DB, d.samsat)
-      await env.DB
-        .prepare(
-          `INSERT INTO devices
-           (id, samsat_id, name, category, service_unit, serial_number, phone_number, holder_name, condition, photo_r2_key, created_at, updated_at, updated_by, deleted_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
-           ON CONFLICT(id) DO UPDATE SET
-             samsat_id=excluded.samsat_id,
-             name=excluded.name,
-             category=excluded.category,
-             service_unit=excluded.service_unit,
-             serial_number=excluded.serial_number,
-             phone_number=excluded.phone_number,
-             holder_name=excluded.holder_name,
-             condition=excluded.condition,
-             updated_at=excluded.updated_at,
-             deleted_at=NULL`
-        )
-        .bind(d.id, samsatId, d.name, d.category, d.serviceUnit, d.serialNumber, d.phoneNumber, d.subLocation, d.condition, now, now)
-        .run()
-      upserted++
+    // Pastikan entri samsat dibuat dulu agar batch devices tidak gagal karena FK
+    const samsatNames = Array.from(new Set(allDevices.map(d => d.samsat)))
+    for (const s of samsatNames) {
+      await ensureSamsat(env.DB, s)
+    }
+
+    // Batch upsert devices agar tidak timeout
+    const chunkSize = 50
+    for (let i = 0; i < allDevices.length; i += chunkSize) {
+      const chunk = allDevices.slice(i, i + chunkSize)
+      const stmts: D1PreparedStatement[] = []
+      for (const d of chunk) {
+        const samsatId = d.samsat
+        const stmt = env.DB
+          .prepare(
+            `INSERT INTO devices
+             (id, samsat_id, name, category, service_unit, serial_number, phone_number, holder_name, condition, photo_r2_key, created_at, updated_at, updated_by, deleted_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
+             ON CONFLICT(id) DO UPDATE SET
+               samsat_id=excluded.samsat_id,
+               name=excluded.name,
+               category=excluded.category,
+               service_unit=excluded.service_unit,
+               serial_number=excluded.serial_number,
+               phone_number=excluded.phone_number,
+               holder_name=excluded.holder_name,
+               condition=excluded.condition,
+               updated_at=excluded.updated_at,
+               deleted_at=NULL`
+          )
+          .bind(d.id, samsatId, d.name, d.category, d.serviceUnit, d.serialNumber, d.phoneNumber, d.subLocation, d.condition, now, now)
+        stmts.push(stmt)
+      }
+      if (stmts.length) {
+        await env.DB.batch(stmts)
+        upserted += stmts.length
+      }
     }
 
     return json({ ok: true, upserted }, { status: 200 })

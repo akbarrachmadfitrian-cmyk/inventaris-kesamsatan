@@ -1644,10 +1644,15 @@ function App() {
     if (!isAdmin) return;
     setLoading(true);
     try {
-      await axios.post('/api/devices', { action: 'importSheets' }, { timeout: 20000 });
+      await axios.post('/api/devices', { action: 'importSheets' }, { timeout: 60000 });
       await fetchData();
     } catch (e) {
-      window.alert('Gagal impor ke database.');
+      try {
+        const errMsg = (e as any)?.response?.data?.error || (e as Error)?.message || 'Unknown';
+        window.alert(`Gagal impor ke database. ${String(errMsg)}`);
+      } catch {
+        window.alert('Gagal impor ke database.');
+      }
     } finally {
       setLoading(false);
     }
