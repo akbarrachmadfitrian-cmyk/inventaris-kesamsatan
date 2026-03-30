@@ -19,6 +19,9 @@ interface Device {
   serialNumber: string;
   phoneNumber: string;
   condition: 'Baik' | 'Kurang Baik' | 'Rusak' | 'Layar Rusak' | string;
+  budgetYear?: string;
+  budgetSource?: string;
+  serviceHistory?: string;
   photo?: string;
   isComplete: boolean;
   dataComplete: boolean;
@@ -468,9 +471,26 @@ const parseSheetCSV = (csvData: string, defaultSamsat: string): Device[] => {
 
   let currentSamsat = defaultSamsat;
   const sheetDevices: Device[] = [];
+  let budgetYearIndex: number | null = null;
+  let budgetSourceIndex: number | null = null;
+  let serviceHistoryIndex: number | null = null;
 
   lines.forEach((line, index) => {
     const cells = parseCsvLine(line, separator);
+
+    if (budgetYearIndex === null || budgetSourceIndex === null || serviceHistoryIndex === null) {
+      const headerLike = cells.some(c => /TAHUN|ANGGARAN|RIWAYAT|SERVIS|SERVICE|SUMBER/i.test(c || ''));
+      const hasNoColumn = cells.some(c => /^NO\.?$/i.test((c || '').trim()));
+      if (headerLike && hasNoColumn) {
+        cells.forEach((c, idx) => {
+          const t = String(c || '').trim();
+          if (!t) return;
+          if (budgetYearIndex === null && /TAHUN.*ANGGARAN|ANGGARAN.*TAHUN/i.test(t)) budgetYearIndex = idx;
+          if (budgetSourceIndex === null && /SUMBER.*ANGGARAN|ANGGARAN.*SUMBER/i.test(t)) budgetSourceIndex = idx;
+          if (serviceHistoryIndex === null && /RIWAYAT.*SERVIS|RIWAYAT.*SERVICE|HISTORY.*SERVIS|HISTORY.*SERVICE/i.test(t)) serviceHistoryIndex = idx;
+        });
+      }
+    }
 
     if (cells.length < 2) {
       if (cells[0].toUpperCase().includes('SAMSAT')) {
@@ -501,6 +521,9 @@ const parseSheetCSV = (csvData: string, defaultSamsat: string): Device[] => {
       const phoneNumberRaw = (cells[8] || '').trim();
       const dataComplete = normalizeFilled(serialNumberRaw) && normalizeFilled(phoneNumberRaw);
       const conditionNormalized = normalizeCondition(cells[5] || '');
+      const budgetYear = budgetYearIndex !== null ? String(cells[budgetYearIndex] || '').trim() : String(cells[9] || '').trim();
+      const budgetSource = budgetSourceIndex !== null ? String(cells[budgetSourceIndex] || '').trim() : String(cells[10] || '').trim();
+      const serviceHistory = serviceHistoryIndex !== null ? String(cells[serviceHistoryIndex] || '').trim() : String(cells[11] || '').trim();
 
       if (currentSamsat.toUpperCase().includes("HANDIL BAKTI")) {
         finalSamsat = "SAMSAT MARABAHAN";
@@ -524,6 +547,9 @@ const parseSheetCSV = (csvData: string, defaultSamsat: string): Device[] => {
         serialNumber: serialNumberRaw || "N/A",
         phoneNumber: phoneNumberRaw,
         condition: conditionNormalized,
+        budgetYear,
+        budgetSource,
+        serviceHistory,
         isComplete: false,
         dataComplete,
         samsat: finalSamsat,
@@ -1434,7 +1460,10 @@ function App() {
             serialNumber: device.serialNumber,
             phoneNumber: device.phoneNumber,
             subLocation: device.subLocation || '',
-            condition: device.condition
+            condition: device.condition,
+            budgetYear: device.budgetYear || '',
+            budgetSource: device.budgetSource || '',
+            serviceHistory: device.serviceHistory || ''
           }
         }, { timeout: 8000 });
         setDevices(prev => [device, ...prev]);
@@ -1504,6 +1533,9 @@ function App() {
           phoneNumber: string;
           subLocation?: string;
           condition: string;
+          budgetYear?: string;
+          budgetSource?: string;
+          serviceHistory?: string;
         }>;
 
         setDbAvailable(true);
@@ -1524,6 +1556,9 @@ function App() {
             serialNumber: d.serialNumber,
             phoneNumber: d.phoneNumber,
             condition: d.condition,
+            budgetYear: d.budgetYear || '',
+            budgetSource: d.budgetSource || '',
+            serviceHistory: d.serviceHistory || '',
             photo,
             isComplete: !!photo,
             dataComplete,
@@ -1735,7 +1770,10 @@ function App() {
             serialNumber: String(finalUpdatedData.serialNumber || '').trim(),
             phoneNumber: String(finalUpdatedData.phoneNumber || '').trim(),
             subLocation: String(finalUpdatedData.subLocation || '').trim(),
-            condition: String(finalUpdatedData.condition || '').trim()
+            condition: String(finalUpdatedData.condition || '').trim(),
+            budgetYear: String(finalUpdatedData.budgetYear || '').trim(),
+            budgetSource: String(finalUpdatedData.budgetSource || '').trim(),
+            serviceHistory: String(finalUpdatedData.serviceHistory || '').trim()
           }
         }, { timeout: 8000 });
       } catch {
@@ -2563,12 +2601,18 @@ function App() {
                         <div><p className="text-slate-400 uppercase text-[10px] tracking-widest mb-1">No HP User</p><p className="text-slate-900">{selectedDevice.phoneNumber || '-'}</p></div>
                         <div><p className="text-slate-400 uppercase text-[10px] tracking-widest mb-1">Pemegang</p><p className="text-slate-900">{selectedDevice.subLocation || '-'}</p></div>
                         <div><p className="text-slate-400 uppercase text-[10px] tracking-widest mb-1">Samsat</p><p className="text-slate-900">{selectedDevice.samsat}</p></div>
+                        <div><p className="text-slate-400 uppercase text-[10px] tracking-widest mb-1">Tahun Anggaran</p><p className="text-slate-900">{selectedDevice.budgetYear || '-'}</p></div>
+                        <div><p className="text-slate-400 uppercase text-[10px] tracking-widest mb-1">Sumber Anggaran</p><p className="text-slate-900">{selectedDevice.budgetSource || '-'}</p></div>
                         <div>
                           <p className="text-slate-400 uppercase text-[10px] tracking-widest mb-1">Kondisi</p>
                           <p className={normalizeCondition(selectedDevice.condition) === 'Baik' ? 'text-emerald-600' : normalizeCondition(selectedDevice.condition) === 'Kurang Baik' ? 'text-amber-700' : 'text-rose-600'}>
                             {normalizeCondition(selectedDevice.condition)}
                           </p>
                         </div>
+                      </div>
+                      <div className="bg-slate-50 border border-slate-100 rounded-[2rem] p-5 mb-8">
+                        <p className="text-slate-400 uppercase text-[10px] tracking-widest mb-2 font-black">Riwayat Servis</p>
+                        <p className="text-sm font-bold text-slate-900 whitespace-pre-wrap">{selectedDevice.serviceHistory || '-'}</p>
                       </div>
                       <div className="bg-slate-50 p-8 rounded-[2.5rem] flex flex-col items-center border border-slate-100">
                         <div className="bg-white p-4 rounded-3xl shadow-sm mb-6">

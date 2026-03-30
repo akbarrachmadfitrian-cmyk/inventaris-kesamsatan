@@ -10,6 +10,9 @@ interface DeviceRow {
   phoneNumber: string
   subLocation: string
   condition: DeviceCondition
+  budgetYear: string
+  budgetSource: string
+  serviceHistory: string
   photoR2Key: string | null
   createdAt: string
   updatedAt: string
@@ -111,9 +114,26 @@ const parseSheetCSV = (csvData: string, defaultSamsat: string): DeviceRow[] => {
 
   let currentSamsat = defaultSamsat
   const out: DeviceRow[] = []
+  let budgetYearIndex: number | null = null
+  let budgetSourceIndex: number | null = null
+  let serviceHistoryIndex: number | null = null
 
   lines.forEach((line, index) => {
     const cells = parseCsvLine(line, separator)
+
+    if (budgetYearIndex === null || budgetSourceIndex === null || serviceHistoryIndex === null) {
+      const headerLike = cells.some(c => /TAHUN|ANGGARAN|RIWAYAT|SERVIS|SERVICE|SUMBER/i.test(c || ''))
+      const hasNoColumn = cells.some(c => /^NO\.?$/i.test((c || '').trim()))
+      if (headerLike && hasNoColumn) {
+        cells.forEach((c, idx) => {
+          const t = String(c || '').trim()
+          if (!t) return
+          if (budgetYearIndex === null && /TAHUN.*ANGGARAN|ANGGARAN.*TAHUN/i.test(t)) budgetYearIndex = idx
+          if (budgetSourceIndex === null && /SUMBER.*ANGGARAN|ANGGARAN.*SUMBER/i.test(t)) budgetSourceIndex = idx
+          if (serviceHistoryIndex === null && /RIWAYAT.*SERVIS|RIWAYAT.*SERVICE|HISTORY.*SERVIS|HISTORY.*SERVICE/i.test(t)) serviceHistoryIndex = idx
+        })
+      }
+    }
 
     if (cells.length < 2) {
       if ((cells[0] || '').toUpperCase().includes('SAMSAT')) {
@@ -153,6 +173,12 @@ const parseSheetCSV = (csvData: string, defaultSamsat: string): DeviceRow[] => {
     const serialNumberRaw = (cells[3] || '').trim()
     const phoneNumberRaw = (cells[8] || '').trim()
     const conditionNormalized = normalizeCondition(cells[5] || '')
+    const budgetYear =
+      budgetYearIndex !== null && budgetYearIndex >= 0 ? String(cells[budgetYearIndex] || '').trim() : String(cells[9] || '').trim()
+    const budgetSource =
+      budgetSourceIndex !== null && budgetSourceIndex >= 0 ? String(cells[budgetSourceIndex] || '').trim() : String(cells[10] || '').trim()
+    const serviceHistory =
+      serviceHistoryIndex !== null && serviceHistoryIndex >= 0 ? String(cells[serviceHistoryIndex] || '').trim() : String(cells[11] || '').trim()
 
     const rowNo = (cells[0] || '').trim()
     const fallbackId = rowNo ? `${defaultSamsat}-${rowNo}` : `dev-${defaultSamsat}-${index}`
@@ -171,6 +197,9 @@ const parseSheetCSV = (csvData: string, defaultSamsat: string): DeviceRow[] => {
       phoneNumber: phoneNumberRaw,
       subLocation: cells[6] || 'Staff',
       condition: conditionNormalized,
+      budgetYear,
+      budgetSource,
+      serviceHistory,
       photoR2Key: null,
       createdAt: nowIso(),
       updatedAt: nowIso(),
@@ -204,6 +233,9 @@ const mapDeviceRow = (row: Record<string, unknown>): DeviceRow => {
     phoneNumber: String(row.phone_number || row.phoneNumber || ''),
     subLocation: String(row.holder_name || row.subLocation || ''),
     condition: String(row.condition || ''),
+    budgetYear: String(row.budget_year || row.budgetYear || ''),
+    budgetSource: String(row.budget_source || row.budgetSource || ''),
+    serviceHistory: String(row.service_history || row.serviceHistory || ''),
     photoR2Key: row.photo_r2_key ? String(row.photo_r2_key) : null,
     createdAt: String(row.created_at || ''),
     updatedAt: String(row.updated_at || ''),
@@ -237,6 +269,7 @@ export async function onRequestGet({ request, env }: { request: Request; env: En
   const sql = `
     SELECT
       d.id, d.name, d.category, d.service_unit, d.serial_number, d.phone_number, d.holder_name, d.condition,
+      d.budget_year, d.budget_source, d.service_history,
       d.photo_r2_key, d.created_at, d.updated_at, d.updated_by,
       s.name AS samsat
     FROM devices d
@@ -286,6 +319,9 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
     const phoneNumber = String(payload.phoneNumber || payload.phone_number || '').trim()
     const subLocation = String(payload.subLocation || payload.holder_name || '').trim()
     const condition = String(payload.condition || '').trim()
+    const budgetYear = String(payload.budgetYear || payload.budget_year || '').trim()
+    const budgetSource = String(payload.budgetSource || payload.budget_source || '').trim()
+    const serviceHistory = String(payload.serviceHistory || payload.service_history || '').trim()
     const updatedBy = payload.updatedBy ? String(payload.updatedBy) : null
 
     if (!samsat || !name || !serviceUnit) return json({ error: 'samsat, name, serviceUnit wajib diisi' }, { status: 400 })
@@ -295,10 +331,10 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
     await env.DB
       .prepare(
         `UPDATE devices
-         SET samsat_id=?, name=?, category=?, service_unit=?, serial_number=?, phone_number=?, holder_name=?, condition=?, updated_at=?, updated_by=?
+         SET samsat_id=?, name=?, category=?, service_unit=?, serial_number=?, phone_number=?, holder_name=?, condition=?, budget_year=?, budget_source=?, service_history=?, updated_at=?, updated_by=?
          WHERE id=? AND deleted_at IS NULL`
       )
-      .bind(samsatId, name, category || 'Aset', serviceUnit, serialNumber || 'N/A', phoneNumber, subLocation || 'Staff', condition || 'Baik', now, updatedBy, id)
+      .bind(samsatId, name, category || 'Aset', serviceUnit, serialNumber || 'N/A', phoneNumber, subLocation || 'Staff', condition || 'Baik', budgetYear, budgetSource, serviceHistory, now, updatedBy, id)
       .run()
 
     return json({ ok: true }, { status: 200 })
@@ -359,8 +395,8 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
         const stmt = env.DB
           .prepare(
             `INSERT INTO devices
-             (id, samsat_id, name, category, service_unit, serial_number, phone_number, holder_name, condition, photo_r2_key, created_at, updated_at, updated_by, deleted_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
+             (id, samsat_id, name, category, service_unit, serial_number, phone_number, holder_name, condition, budget_year, budget_source, service_history, photo_r2_key, created_at, updated_at, updated_by, deleted_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
              ON CONFLICT(id) DO UPDATE SET
                samsat_id=excluded.samsat_id,
                name=excluded.name,
@@ -370,10 +406,13 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
                phone_number=excluded.phone_number,
                holder_name=excluded.holder_name,
                condition=excluded.condition,
+               budget_year=excluded.budget_year,
+               budget_source=excluded.budget_source,
+               service_history=excluded.service_history,
                updated_at=excluded.updated_at,
                deleted_at=NULL`
           )
-          .bind(d.id, samsatId, d.name, d.category, d.serviceUnit, d.serialNumber, d.phoneNumber, d.subLocation, d.condition, now, now)
+          .bind(d.id, samsatId, d.name, d.category, d.serviceUnit, d.serialNumber, d.phoneNumber, d.subLocation, d.condition, d.budgetYear, d.budgetSource, d.serviceHistory, now, now)
         stmts.push(stmt)
       }
       if (stmts.length) {
@@ -396,6 +435,9 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
   const phoneNumber = String(payload.phoneNumber || payload.phone_number || '').trim()
   const subLocation = String(payload.subLocation || payload.holder_name || '').trim()
   const condition = String(payload.condition || '').trim()
+  const budgetYear = String(payload.budgetYear || payload.budget_year || '').trim()
+  const budgetSource = String(payload.budgetSource || payload.budget_source || '').trim()
+  const serviceHistory = String(payload.serviceHistory || payload.service_history || '').trim()
   const id = String(payload.id || '').trim() || newId()
 
   if (!samsat || !name || !serviceUnit) return json({ error: 'samsat, name, serviceUnit wajib diisi' }, { status: 400 })
@@ -406,10 +448,10 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
   await env.DB
     .prepare(
       `INSERT INTO devices
-       (id, samsat_id, name, category, service_unit, serial_number, phone_number, holder_name, condition, photo_r2_key, created_at, updated_at, updated_by, deleted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL)`
+       (id, samsat_id, name, category, service_unit, serial_number, phone_number, holder_name, condition, budget_year, budget_source, service_history, photo_r2_key, created_at, updated_at, updated_by, deleted_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL)`
     )
-    .bind(id, samsatId, name, category || 'Aset', serviceUnit, serialNumber || 'N/A', phoneNumber, subLocation || 'Staff', condition || 'Baik', now, now)
+    .bind(id, samsatId, name, category || 'Aset', serviceUnit, serialNumber || 'N/A', phoneNumber, subLocation || 'Staff', condition || 'Baik', budgetYear, budgetSource, serviceHistory, now, now)
     .run()
 
   return json({ ok: true, id }, { status: 200 })
