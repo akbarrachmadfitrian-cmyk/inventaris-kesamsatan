@@ -1,40 +1,13 @@
 type InboxKind = 'damage_report' | 'device_request'
 type InboxStatus = 'unread' | 'read'
 
-interface InboxAttachment {
-  fileName: string
-  mimeType: string
-  dataUrl: string
-  uploadedAt: string
-}
-
-interface DamageReportPayload {
-  kerusakanPerangkat: string
-  layananRusak: string
-  jenisMerkSnPerangkatRusak: string
-  namaDanKontakPengguna: string
-  perbaikanMandiri: 'Sudah' | 'Belum'
-  kwitansiBuktiPerbaikan: InboxAttachment | null
-  fotoPerangkatRusak: InboxAttachment
-}
-
-interface DeviceRequestPayload {
-  untukLayanan: string
-  kebutuhanPerangkat: 'PC KESAMSATAN' | 'PRINTER KESAMSATAN' | 'PC & PRINTER KESAMSATAN'
-  jumlahPermintaan: number | null
-  jumlahPermintaanPC: number | null
-  jumlahPermintaanPrinter: number | null
-  alasanPermintaan: string
-  suratPermintaan: InboxAttachment
-}
-
 interface InboxMessage {
   id: string
   kind: InboxKind
   status: InboxStatus
   samsat: string
   createdAt: string
-  payload: DamageReportPayload | DeviceRequestPayload
+  payload: unknown
 }
 
 interface Env {
@@ -45,6 +18,7 @@ interface KVNamespace {
   get<T = unknown>(key: string, type: 'json'): Promise<T | null>
   get(key: string): Promise<string | null>
   put(key: string, value: string): Promise<void>
+  delete(key: string): Promise<void>
   list(options: { prefix: string }): Promise<{ keys: Array<{ name: string }> }>
 }
 
@@ -100,6 +74,13 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
 
   const data = body && typeof body === 'object' ? (body as Record<string, unknown>) : {}
   const action = String(data.action || 'create')
+
+  if (action === 'delete') {
+    const id = String(data.id || '').trim()
+    if (!id) return json({ error: 'id wajib diisi' }, { status: 400 })
+    await env.INBOX_KV.delete(`msg:${id}`)
+    return json({ ok: true, deleted: 1 }, { status: 200 })
+  }
 
   if (action === 'markRead') {
     const idsRaw = data.ids

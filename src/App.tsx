@@ -672,6 +672,16 @@ function App() {
     setIsManageLoginOpen(false);
   };
 
+  const sortInboxByCreatedAtDesc = (items: InboxMessage[]) => {
+    return [...items].sort((a, b) => {
+      const ta = new Date(String(a.createdAt || '')).getTime();
+      const tb = new Date(String(b.createdAt || '')).getTime();
+      const na = Number.isFinite(ta) ? ta : 0;
+      const nb = Number.isFinite(tb) ? tb : 0;
+      return nb - na;
+    });
+  };
+
   const fetchInboxItems = async (kind: InboxKind, status: 'all' | InboxStatus = 'all') => {
     setInboxLoading(true);
     try {
@@ -681,12 +691,13 @@ function App() {
           timeout: 8000
         });
         const items = (response.data?.items || []) as InboxMessage[];
-        setInboxItems(items);
-        return items;
+        const sorted = sortInboxByCreatedAtDesc(items);
+        setInboxItems(sorted);
+        return sorted;
       } catch {
-        const items = loadInboxMessages()
+        const items = sortInboxByCreatedAtDesc(loadInboxMessages()
           .filter(m => (status === 'all' ? true : m.status === status) && m.kind === kind)
-          .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+        );
         setInboxItems(items);
         return items;
       }
@@ -721,6 +732,23 @@ function App() {
       const next = loadInboxMessages().map(m => (ids.includes(m.id) ? { ...m, status: 'read' as InboxStatus } : m));
       saveInboxMessages(next);
     }
+    refreshUnreadInboxCount();
+  };
+
+  const deleteInboxMessage = async (msg: InboxMessage) => {
+    const ok = window.confirm('apakah anda yakin menghapus pesan ini?');
+    if (!ok) return;
+
+    try {
+      await axios.post('/api/inbox', { action: 'delete', id: msg.id }, { timeout: 8000 });
+    } catch {
+      const next = loadInboxMessages().filter(m => m.id !== msg.id);
+      saveInboxMessages(next);
+    }
+
+    setInboxItems(prev => prev.filter(m => m.id !== msg.id));
+    setActiveInboxMessage(prev => (prev?.id === msg.id ? null : prev));
+    setMessageDirectory(prev => cleanupMessageDirectory(prev.filter(i => i.inboxMessageId !== msg.id)));
     refreshUnreadInboxCount();
   };
 
@@ -3096,23 +3124,34 @@ function App() {
                           </div>
                         ) : (
                           inboxItems.map(m => (
-                            <button
+                            <div
                               key={m.id}
-                              onClick={() => openInboxMessage(m)}
-                              className="w-full text-left bg-white border border-slate-200 rounded-2xl px-4 py-3 hover:bg-slate-50 transition-colors"
+                              className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 hover:bg-slate-50 transition-colors"
                             >
                               <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0">
+                                <button
+                                  onClick={() => openInboxMessage(m)}
+                                  className="flex-grow text-left min-w-0"
+                                >
                                   <p className="text-sm font-black text-slate-900 truncate">{m.samsat}</p>
                                   <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">
                                     {m.kind === 'damage_report' ? 'Laporan Kerusakan' : 'Permintaan Perangkat'} • {new Date(m.createdAt).toLocaleString()}
                                   </p>
+                                </button>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  {m.status === 'unread' && (
+                                    <span className="w-3 h-3 rounded-full bg-rose-600 mt-1 shrink-0" />
+                                  )}
+                                  <button
+                                    onClick={() => deleteInboxMessage(m)}
+                                    className="p-2 rounded-2xl bg-slate-50 hover:bg-rose-50 text-rose-600 transition-colors"
+                                    aria-label="Hapus pesan"
+                                  >
+                                    <Trash2 className="w-5 h-5" />
+                                  </button>
                                 </div>
-                                {m.status === 'unread' && (
-                                  <span className="w-3 h-3 rounded-full bg-rose-600 mt-1 shrink-0" />
-                                )}
                               </div>
-                            </button>
+                            </div>
                           ))
                         )}
                       </div>
