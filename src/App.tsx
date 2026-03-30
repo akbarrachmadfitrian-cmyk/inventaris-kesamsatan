@@ -1912,7 +1912,7 @@ function App() {
           <QrCode className="w-6 h-6 text-blue-600" />
           <h3 className="text-xl font-black text-slate-900">Scan QR Code Perangkat</h3>
         </div>
-        <p className="text-sm text-slate-500 font-bold mb-6">Arahkan kamera ke QR Code pada perangkat untuk melihat detailnya secara otomatis.</p>
+        <p className="text-sm text-slate-500 font-bold mb-6">Arahkan kamera belakang ke QR Code pada perangkat untuk melihat detailnya secara otomatis.</p>
         <div id="qr-reader" className="w-full max-w-lg mx-auto rounded-3xl overflow-hidden border-2 border-slate-100 bg-slate-50"></div>
       </div>
     );
@@ -1922,9 +1922,14 @@ function App() {
     let html5QrcodeScanner: { render: (onSuccess: (decodedText: string) => void, onError: (errorMessage: string) => void) => void; clear: () => Promise<void> } | null = null;
     if (viewMode === 'scan-qr' && isAdmin) {
       import('html5-qrcode').then(({ Html5QrcodeScanner }) => {
+        const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+        const isMobile = /Android|iPhone|iPad|iPod/i.test(ua);
+        const config = isMobile
+          ? { fps: 10, qrbox: { width: 250, height: 250 }, videoConstraints: { facingMode: { ideal: 'environment' } } }
+          : { fps: 10, qrbox: { width: 250, height: 250 } };
         html5QrcodeScanner = new Html5QrcodeScanner(
           "qr-reader",
-          { fps: 10, qrbox: { width: 250, height: 250 } },
+          config,
           /* verbose= */ false
         );
         html5QrcodeScanner.render((decodedText: string) => {
@@ -4040,11 +4045,55 @@ function App() {
         )}
       </AnimatePresence>
 
+      {selectedDevice ? (
+        <div id="qr-print-area" style={{ visibility: 'hidden', position: 'absolute', left: 0, top: 0, width: '100%' }}>
+          <div className="w-full flex items-start justify-start p-6">
+            <div className="bg-white rounded-3xl border border-slate-200 p-6 w-full max-w-[520px]">
+              <div className="flex items-start gap-6">
+                <div className="bg-white p-3 rounded-3xl border border-slate-100">
+                  <QRCodeSVG value={JSON.stringify({ id: selectedDevice.id, sn: selectedDevice.serialNumber })} size={140} level="H" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Inventaris Kesamsatan</p>
+                  <p className="text-xl font-black text-slate-900 mt-1 leading-tight">{selectedDevice.name}</p>
+                  <p className="text-xs font-bold text-slate-600 mt-2">{selectedDevice.samsat}</p>
+                  <p className="text-xs font-bold text-slate-500 mt-1">{selectedDevice.serviceUnit}</p>
+                  <div className="mt-4 grid grid-cols-2 gap-3 text-xs font-bold">
+                    <div>
+                      <p className="text-[10px] text-slate-400 uppercase tracking-widest">SN</p>
+                      <p className="text-slate-900 font-mono break-all">{selectedDevice.serialNumber}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-slate-400 uppercase tracking-widest">Kondisi</p>
+                      <p className="text-slate-900">{normalizeCondition(selectedDevice.condition)}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-slate-400 uppercase tracking-widest">Pemegang</p>
+                      <p className="text-slate-900">{selectedDevice.subLocation || '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-slate-400 uppercase tracking-widest">No HP</p>
+                      <p className="text-slate-900">{selectedDevice.phoneNumber || '-'}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between">
+                <p className="text-[10px] font-bold text-slate-400">https://inventaris-kesamsatan.pages.dev</p>
+                <p className="text-[10px] font-bold text-slate-400">{new Date().toLocaleString()}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <style>{`
         @media print {
+          @page { margin: 0; }
+          body { margin: 0; }
           body * { visibility: hidden; }
-          .bg-white.rounded-3xl, .bg-white.rounded-3xl * { visibility: visible; }
-          .bg-white.rounded-3xl { position: fixed; left: 0; top: 0; }
+          #qr-print-area, #qr-print-area * { visibility: visible; }
+          #qr-print-area { position: absolute; left: 0; top: 0; width: 100%; height: 100vh; overflow: hidden; }
         }
       `}</style>
     </div>
