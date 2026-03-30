@@ -569,6 +569,9 @@ function App() {
   const [activeSamsat, setActiveSamsat] = useState<string | null>(null);
   const [showSamsatDropdown, setShowSamsatDropdown] = useState(false);
   const [isLayananModalOpen, setIsLayananModalOpen] = useState(false);
+  const [isDashboardDevicesModalOpen, setIsDashboardDevicesModalOpen] = useState(false);
+  const [dashboardDevicesModalTitle, setDashboardDevicesModalTitle] = useState<string>('Daftar Perangkat');
+  const [dashboardDevicesModalFilter, setDashboardDevicesModalFilter] = useState<'all' | 'Baik' | 'Kurang Baik' | 'Rusak'>('all');
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
   const [requestDraft, setRequestDraft] = useState<DeviceRequest | null>(null);
   const [newDeviceDraft, setNewDeviceDraft] = useState<Partial<Device>>({
@@ -1325,7 +1328,7 @@ function App() {
       window.alert('Akses terbatas. Hanya Super Admin yang dapat menghapus perangkat.');
       return;
     }
-    const ok = window.confirm(`Hapus perangkat "${device.name}"?`);
+    const ok = window.confirm('apakah anda yakin ingin menghapus perangkat ini?');
     if (!ok) return;
 
     setSelectedDevice(prev => (prev?.id === device.id ? null : prev));
@@ -1648,8 +1651,19 @@ function App() {
       await fetchData();
     } catch (e) {
       try {
-        const errMsg = (e as any)?.response?.data?.error || (e as Error)?.message || 'Unknown';
-        window.alert(`Gagal impor ke database. ${String(errMsg)}`);
+        const err = e as unknown;
+        let errMsg = 'Unknown';
+        if (axios.isAxiosError(err)) {
+          const data = err.response?.data as unknown;
+          if (data && typeof data === 'object' && 'error' in data) {
+            errMsg = String((data as { error?: unknown }).error ?? err.message);
+          } else {
+            errMsg = err.message;
+          }
+        } else if (err instanceof Error) {
+          errMsg = err.message;
+        }
+        window.alert(`Gagal impor ke database. ${errMsg}`);
       } catch {
         window.alert('Gagal impor ke database.');
       }
@@ -1805,6 +1819,11 @@ function App() {
     });
     return groups;
   }, [currentSamsatDevices]);
+
+  const dashboardFilteredDevices = useMemo(() => {
+    if (dashboardDevicesModalFilter === 'all') return currentSamsatDevices;
+    return currentSamsatDevices.filter(d => normalizeCondition(d.condition) === dashboardDevicesModalFilter);
+  }, [currentSamsatDevices, dashboardDevicesModalFilter]);
 
   const attentionDevices = useMemo(() => 
     currentSamsatDevices.filter(d => normalizeCondition(d.condition) !== 'Baik').slice(0, 5),
@@ -2221,16 +2240,16 @@ function App() {
             <>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
                 {[
-                  { label: 'Total Perangkat', value: stats.total, icon: <Monitor className="w-6 h-6" />, color: 'text-blue-600', bg: 'bg-blue-50' },
-                  { label: 'Kondisi Baik', value: stats.baik, icon: <CheckCircle2 className="w-6 h-6" />, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-                  { label: 'Kurang Baik', value: stats.kurangBaik, icon: <AlertTriangle className="w-6 h-6" />, color: 'text-amber-600', bg: 'bg-amber-50' },
-                  { label: 'Rusak / Tidak Baik', value: stats.rusak, icon: <XCircle className="w-6 h-6" />, color: 'text-rose-600', bg: 'bg-rose-50' },
+                  { label: 'Total Perangkat', value: stats.total, icon: <Monitor className="w-6 h-6" />, color: 'text-blue-600', bg: 'bg-blue-50', onClick: () => { setDashboardDevicesModalTitle('Daftar Total Perangkat'); setDashboardDevicesModalFilter('all'); setIsDashboardDevicesModalOpen(true); } },
+                  { label: 'Kondisi Baik', value: stats.baik, icon: <CheckCircle2 className="w-6 h-6" />, color: 'text-emerald-600', bg: 'bg-emerald-50', onClick: () => { setDashboardDevicesModalTitle('Daftar Perangkat Kondisi Baik'); setDashboardDevicesModalFilter('Baik'); setIsDashboardDevicesModalOpen(true); } },
+                  { label: 'Kurang Baik', value: stats.kurangBaik, icon: <AlertTriangle className="w-6 h-6" />, color: 'text-amber-600', bg: 'bg-amber-50', onClick: () => { setDashboardDevicesModalTitle('Daftar Perangkat Kurang Baik'); setDashboardDevicesModalFilter('Kurang Baik'); setIsDashboardDevicesModalOpen(true); } },
+                  { label: 'Rusak / Tidak Baik', value: stats.rusak, icon: <XCircle className="w-6 h-6" />, color: 'text-rose-600', bg: 'bg-rose-50', onClick: () => { setDashboardDevicesModalTitle('Daftar Perangkat Rusak / Tidak Baik'); setDashboardDevicesModalFilter('Rusak'); setIsDashboardDevicesModalOpen(true); } },
                   { label: 'Jenis Layanan', value: stats.layanan, icon: <Layers className="w-6 h-6" />, color: 'text-purple-600', bg: 'bg-purple-50', onClick: () => setIsLayananModalOpen(true) },
                 ].map((stat, i) => (
                   <motion.div 
                     key={i} 
                     onClick={stat.onClick}
-                    className={`bg-white p-6 rounded-3xl border border-slate-100 shadow-sm flex flex-col items-start gap-4 ${stat.onClick ? 'cursor-pointer hover:border-purple-300 hover:shadow-md transition-all' : ''}`}
+                    className={`bg-white p-6 rounded-3xl border border-slate-100 shadow-sm flex flex-col items-start gap-4 cursor-pointer hover:border-slate-200 hover:shadow-md transition-all`}
                   >
                     <div className={`p-3 ${stat.bg} ${stat.color} rounded-2xl`}>{stat.icon}</div>
                     <div>
@@ -2377,15 +2396,23 @@ function App() {
                       <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-400 group-hover:text-blue-600 transition-all">
                         {d.category.toLowerCase().includes('printer') ? <Printer className="w-6 h-6" /> : <Monitor className="w-6 h-6" />}
                       </div>
-                      {isAdmin && !strictSheetSync && (
+                      <div className="flex items-center gap-2">
                         <button
-                          onClick={(e) => { e.stopPropagation(); deleteDevice(d); }}
-                          className="p-2 rounded-xl hover:bg-rose-50 text-rose-600 transition-colors"
-                          aria-label="Hapus perangkat"
+                          onClick={(e) => { e.stopPropagation(); setSelectedDevice(d); setIsEditing(false); }}
+                          className="px-3 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-black transition-colors"
                         >
-                          <Trash2 className="w-5 h-5" />
+                          Detail
                         </button>
-                      )}
+                        {isAdmin && !strictSheetSync && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); deleteDevice(d); }}
+                            className="p-2 rounded-xl hover:bg-rose-50 text-rose-600 transition-colors"
+                            aria-label="Hapus perangkat"
+                          >
+                            <Trash2 className="w-5 h-5" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <h4 className="font-black text-slate-900 mb-1">{d.name}</h4>
                     <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest mb-4">{d.serviceUnit} • {d.subLocation}</p>
@@ -2554,6 +2581,58 @@ function App() {
                     </>
                   )}
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isDashboardDevicesModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-[3rem] w-full max-w-5xl max-h-[calc(100vh-2rem)] overflow-hidden shadow-2xl relative flex flex-col">
+              <div className="p-8 border-b border-slate-100 flex items-center justify-between shrink-0">
+                <div>
+                  <h3 className="text-2xl font-black text-slate-900">{dashboardDevicesModalTitle}</h3>
+                  <p className="text-sm font-bold text-slate-500 mt-1">{activeSamsat}</p>
+                </div>
+                <button onClick={() => setIsDashboardDevicesModalOpen(false)} className="p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl transition-colors">
+                  <XCircle className="w-6 h-6 text-slate-400" />
+                </button>
+              </div>
+              <div className="p-8 overflow-y-auto flex-grow">
+                {dashboardFilteredDevices.length === 0 ? (
+                  <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-sm font-bold text-slate-600">
+                    Tidak ada perangkat pada kategori ini.
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-100 border border-slate-200 rounded-3xl overflow-hidden">
+                    {dashboardFilteredDevices.map((d) => (
+                      <button
+                        key={d.id}
+                        onClick={() => { setIsDashboardDevicesModalOpen(false); setSelectedDevice(d); setIsEditing(false); }}
+                        className="w-full text-left p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-slate-50 transition-colors"
+                      >
+                        <div>
+                          <p className="font-black text-slate-900">{d.name}</p>
+                          <p className="text-xs font-bold text-slate-500 mt-1 uppercase tracking-widest">{d.serialNumber}</p>
+                          <p className="text-xs font-bold text-slate-500 mt-1">{d.serviceUnit}</p>
+                        </div>
+                        <div className="flex flex-col md:items-end gap-1 text-sm font-bold">
+                          <p className="text-slate-600">User: <span className="text-slate-900">{d.subLocation || '-'}</span></p>
+                          <p className="text-slate-600">No HP: <span className="text-slate-900">{d.phoneNumber || '-'}</span></p>
+                          <span className={`text-[10px] font-black px-2 py-1 rounded-lg uppercase tracking-widest inline-block w-max ${
+                            normalizeCondition(d.condition) === 'Baik' ? 'bg-emerald-100 text-emerald-700' :
+                            normalizeCondition(d.condition) === 'Kurang Baik' ? 'bg-amber-100 text-amber-700' :
+                            'bg-rose-100 text-rose-600'
+                          }`}>
+                            {normalizeCondition(d.condition)}
+                          </span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </motion.div>
           </div>
