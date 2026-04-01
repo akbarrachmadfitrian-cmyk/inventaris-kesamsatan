@@ -761,7 +761,7 @@ function App() {
     setInboxLoading(true);
     try {
       try {
-        const response = await axios.get('/api/inbox', {
+        const response = await axios.get('/api/admin/inbox', {
           params: { kind, status, limit: 200 },
           timeout: 8000
         });
@@ -785,7 +785,7 @@ function App() {
     if (!session || session.role !== 'admin') return;
     try {
       try {
-        const response = await axios.get('/api/inbox', {
+        const response = await axios.get('/api/admin/inbox', {
           params: { status: 'unread', limit: 200 },
           timeout: 8000
         });
@@ -802,7 +802,7 @@ function App() {
   const markInboxRead = async (ids: string[]) => {
     if (!ids.length) return;
     try {
-      await axios.post('/api/inbox', { action: 'markRead', ids }, { timeout: 8000 });
+      await axios.post('/api/admin/inbox', { action: 'markRead', ids }, { timeout: 8000 });
     } catch {
       const next = loadInboxMessages().map(m => (ids.includes(m.id) ? { ...m, status: 'read' as InboxStatus } : m));
       saveInboxMessages(next);
@@ -815,7 +815,7 @@ function App() {
     if (!ok) return;
 
     try {
-      await axios.post('/api/inbox', { action: 'delete', id: msg.id }, { timeout: 8000 });
+      await axios.post('/api/admin/inbox', { action: 'delete', id: msg.id }, { timeout: 8000 });
     } catch {
       const next = loadInboxMessages().filter(m => m.id !== msg.id);
       saveInboxMessages(next);
@@ -869,7 +869,7 @@ function App() {
 
   const updateInboxMessage = async (id: string, payload: DamageReportPayload | DeviceRequestSubmissionPayload) => {
     try {
-      await axios.post('/api/inbox', { action: 'update', id, payload }, { timeout: 8000 });
+      await axios.post('/api/admin/inbox', { action: 'update', id, payload }, { timeout: 8000 });
     } catch {
       const next = loadInboxMessages().map(m => (m.id === id ? { ...m, payload } : m));
       saveInboxMessages(next);
@@ -1034,7 +1034,7 @@ function App() {
 
     try {
       const response = await axios.post(
-        '/api/inbox',
+        '/api/user/inbox',
         { action: 'create', kind, samsat: activeSamsat, payload },
         { timeout: 8000 }
       );
@@ -1346,27 +1346,27 @@ function App() {
   };
 
   const fetchRequestHistoryFromApi = async (samsat: string) => {
-    const res = await axios.get('/api/device-requests', { params: { samsat }, timeout: 8000 });
+    const res = await axios.get('/api/public/device-requests', { params: { samsat }, timeout: 8000 });
     return (res.data?.items || []) as DeviceRequest[];
   };
 
   const fetchRequestByIdFromApi = async (requestId: string) => {
-    const res = await axios.get('/api/device-requests', { params: { requestId }, timeout: 8000 });
+    const res = await axios.get('/api/public/device-requests', { params: { requestId }, timeout: 8000 });
     return (res.data?.item || null) as DeviceRequest | null;
   };
 
   const createRequestInApi = async (samsat: string) => {
     const base = createDefaultRequest(samsat);
-    const res = await axios.post('/api/device-requests', { action: 'create', payload: base }, { timeout: 8000 });
+    const res = await axios.post('/api/admin/device-requests', { action: 'create', payload: base }, { timeout: 8000 });
     return (res.data?.item || null) as DeviceRequest | null;
   };
 
   const saveRequestToApi = async (payload: DeviceRequest) => {
-    await axios.post('/api/device-requests', { action: 'save', payload }, { timeout: 8000 });
+    await axios.post('/api/admin/device-requests', { action: 'save', payload }, { timeout: 8000 });
   };
 
   const deleteRequestInApi = async (payload: Pick<DeviceRequest, 'requestId' | 'samsat'>) => {
-    await axios.post('/api/device-requests', { action: 'delete', payload }, { timeout: 8000 });
+    await axios.post('/api/admin/device-requests', { action: 'delete', payload }, { timeout: 8000 });
   };
 
   const openRequestHubModal = async () => {
@@ -1502,7 +1502,7 @@ function App() {
 
     if (dbAvailable) {
       try {
-        await axios.post('/api/devices', { action: 'delete', id: device.id }, { timeout: 8000 });
+        await axios.post('/api/admin/devices', { action: 'delete', id: device.id }, { timeout: 8000 });
       } catch {
         window.alert('Gagal menghapus perangkat di database.');
       }
@@ -1578,7 +1578,7 @@ function App() {
 
     if (dbAvailable) {
       try {
-        await axios.post('/api/devices', {
+        await axios.post('/api/admin/devices', {
           action: 'create',
           payload: {
             id: device.id,
@@ -1670,7 +1670,7 @@ function App() {
     setLoading(true);
     try {
       try {
-        const res = await axios.get('/api/devices?limit=500', { timeout: 8000 });
+        const res = await axios.get('/api/public/devices?limit=500', { timeout: 8000 });
         const itemsRaw = (res.data?.items || []) as Array<{
           id: string;
           samsat: string;
@@ -1743,7 +1743,7 @@ function App() {
 
       const discoverSheets = async () => {
         try {
-          const response = await axios.get('/api/sheets?format=html', { timeout: 8000 });
+          const response = await axios.get('/api/admin/sheets?format=html', { timeout: 8000 });
           const html = String(response.data || '');
           if (!html) return fallbackSheets;
 
@@ -1780,7 +1780,7 @@ function App() {
         try {
           let csvData = "";
           try {
-            const response = await axios.get(`/api/sheets?gid=${encodeURIComponent(sheet.gid)}`, { timeout: 8000 });
+            const response = await axios.get(`/api/admin/sheets?gid=${encodeURIComponent(sheet.gid)}`, { timeout: 8000 });
             csvData = response.data;
           } catch (e) {
             try {
@@ -1830,7 +1830,7 @@ function App() {
     if (!isAdmin) return;
     setLoading(true);
     try {
-      await axios.post('/api/devices', { action: 'importSheets' }, { timeout: 60000 });
+      await axios.post('/api/admin/devices', { action: 'importSheets' }, { timeout: 60000 });
       await fetchData();
     } catch (e) {
       try {
@@ -1907,7 +1907,7 @@ function App() {
     
     if (dbAvailable) {
       try {
-        await axios.post('/api/devices', {
+        await axios.post('/api/admin/devices', {
           action: 'update',
           payload: {
             id: updatedDeviceId,
