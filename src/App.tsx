@@ -1401,7 +1401,7 @@ function App() {
     }
     if (!req) return;
     setRequestDraft({ ...createDefaultRequest(req.samsat), ...req });
-    setNewDeviceDraft({ condition: 'Baik', samsat: req.samsat });
+    setNewDeviceDraft({ condition: 'Baik', samsat: req.samsat, budgetSource: 'APBD' });
     setIsRequestModalOpen(true);
   };
 
@@ -1419,7 +1419,7 @@ function App() {
     }
     if (!req) return;
     setRequestDraft({ ...createDefaultRequest(req.samsat), ...req });
-    setNewDeviceDraft({ condition: 'Baik', samsat: req.samsat });
+    setNewDeviceDraft({ condition: 'Baik', samsat: req.samsat, budgetSource: 'APBD' });
     setIsAddDeviceModalOpen(true);
   };
 
@@ -1611,6 +1611,8 @@ function App() {
       serialNumber: serialNumber || 'N/A',
       phoneNumber,
       condition,
+      budgetYear: String(newDeviceDraft.budgetYear || '').trim(),
+      budgetSource: String(newDeviceDraft.budgetSource || '').trim(),
       isComplete: false,
       dataComplete: normalizeFilled(serialNumber) && normalizeFilled(phoneNumber),
       samsat: activeSamsat,
@@ -1674,6 +1676,8 @@ function App() {
       serialNumber: '',
       phoneNumber: '',
       subLocation: '',
+      budgetYear: '',
+      budgetSource: 'APBD',
       condition: 'Baik'
     }));
   };
@@ -3570,6 +3574,28 @@ function App() {
                                     onChange={(e) => setNewDeviceDraft(prev => ({ ...prev, subLocation: e.target.value }))}
                                     className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-bold text-sm"
                                   />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Tahun Anggaran</label>
+                                  <input
+                                    type="text"
+                                    value={String(newDeviceDraft.budgetYear || '')}
+                                    onChange={(e) => setNewDeviceDraft(prev => ({ ...prev, budgetYear: e.target.value }))}
+                                    className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-bold text-sm"
+                                    placeholder="Contoh: 2026"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Sumber Anggaran</label>
+                                  <select
+                                    value={String(newDeviceDraft.budgetSource || 'APBD')}
+                                    onChange={(e) => setNewDeviceDraft(prev => ({ ...prev, budgetSource: e.target.value }))}
+                                    className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-bold text-sm"
+                                  >
+                                    <option value="APBD">APBD</option>
+                                    <option value="Cost Sharing">Cost Sharing</option>
+                                    <option value="Hibah Bank Kalsel">Hibah Bank Kalsel</option>
+                                  </select>
                                 </div>
                                 <div>
                                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Kondisi</label>
