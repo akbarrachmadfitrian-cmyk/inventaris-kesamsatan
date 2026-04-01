@@ -46,7 +46,7 @@ interface Stats {
 
 type StockStatus = 'ready' | 'empty' | 'standby';
 type ApprovalStatus = 'approved' | 'rejected' | 'pending';
-type RequestType = 'PC KESAMSATAN' | 'PRINTER KESAMSATAN';
+type RequestType = 'PC KESAMSATAN' | 'PRINTER KESAMSATAN' | 'PC & PRINTER KESAMSATAN';
 
 interface DeviceRequestLetter {
   fileName: string;
@@ -59,6 +59,8 @@ interface DeviceRequest {
   samsat: string;
   requestType: RequestType;
   requestedCount: number;
+  requestedCountPC: number;
+  requestedCountPrinter: number;
   letter: DeviceRequestLetter | null;
   beritaAcara: DeviceRequestLetter | null;
   stockStatus: StockStatus;
@@ -392,6 +394,8 @@ const createDefaultRequest = (samsat: string): DeviceRequest => ({
   samsat,
   requestType: 'PC KESAMSATAN',
   requestedCount: 0,
+  requestedCountPC: 0,
+  requestedCountPrinter: 0,
   letter: null,
   beritaAcara: null,
   stockStatus: 'standby',
@@ -1347,7 +1351,8 @@ function App() {
     let req: DeviceRequest | null = null;
     if (dbAvailable) {
       try {
-        req = await fetchRequestFromApi(activeSamsat);
+        const fetched = await fetchRequestFromApi(activeSamsat);
+        req = fetched ? { ...createDefaultRequest(activeSamsat), ...fetched } : null;
       } catch {
         req = null;
       }
@@ -1373,7 +1378,8 @@ function App() {
     let req: DeviceRequest | null = null;
     if (dbAvailable) {
       try {
-        req = await fetchRequestFromApi(activeSamsat);
+        const fetched = await fetchRequestFromApi(activeSamsat);
+        req = fetched ? { ...createDefaultRequest(activeSamsat), ...fetched } : null;
       } catch {
         req = null;
       }
@@ -1411,7 +1417,8 @@ function App() {
       let req: DeviceRequest | null = null;
       if (dbAvailable) {
         try {
-          req = await fetchRequestFromApi(activeSamsat);
+          const fetched = await fetchRequestFromApi(activeSamsat);
+          req = fetched ? { ...createDefaultRequest(activeSamsat), ...fetched } : null;
         } catch {
           req = null;
         }
@@ -1479,8 +1486,11 @@ function App() {
 
   const getApprovedCount = (req: DeviceRequest) => {
     if (req.stockStatus !== 'ready') return 0;
-    const requested = Math.max(0, Number(req.requestedCount || 0));
-    return requested;
+    const totalRequested =
+      req.requestType === 'PC & PRINTER KESAMSATAN'
+        ? Math.max(0, Number(req.requestedCountPC || 0)) + Math.max(0, Number(req.requestedCountPrinter || 0))
+        : Math.max(0, Number(req.requestedCount || 0));
+    return totalRequested;
   };
 
   const addRequestedDevice = async () => {
@@ -1601,8 +1611,7 @@ function App() {
           mimeType: file.type || 'application/octet-stream',
           dataUrl,
           uploadedAt: new Date().toISOString()
-        },
-        requestedCount: requestDraft.requestedCount
+        }
       };
       persistRequestDraft(next);
     };
@@ -2902,7 +2911,11 @@ function App() {
                 </div>
 
                 {(() => {
-                  const suratOk = !!requestDraft.letter && requestDraft.requestedCount > 0;
+                  const totalRequested =
+                    requestDraft.requestType === 'PC & PRINTER KESAMSATAN'
+                      ? Math.max(0, Number(requestDraft.requestedCountPC || 0)) + Math.max(0, Number(requestDraft.requestedCountPrinter || 0))
+                      : Math.max(0, Number(requestDraft.requestedCount || 0));
+                  const suratOk = !!requestDraft.letter && totalRequested > 0;
                   const stockOk = requestDraft.stockStatus === 'ready';
                   const stockNo = requestDraft.stockStatus === 'empty';
                   const stockBadge = getStatusBadge(stockOk ? 'ok' : stockNo ? 'no' : 'pending');
@@ -2956,67 +2969,74 @@ function App() {
                               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Jenis Permintaan Perangkat</p>
                               <select
                                 value={requestDraft.requestType}
-                                onChange={(e) => persistRequestDraft({ ...requestDraft, requestType: e.target.value as RequestType })}
+                                onChange={(e) =>
+                                  persistRequestDraft({
+                                    ...requestDraft,
+                                    requestType: e.target.value as RequestType,
+                                    requestedCount: 0,
+                                    requestedCountPC: 0,
+                                    requestedCountPrinter: 0
+                                  })
+                                }
                                 className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-2 text-xs font-black text-slate-900"
                               >
                                 <option value="PC KESAMSATAN">PC KESAMSATAN</option>
                                 <option value="PRINTER KESAMSATAN">PRINTER KESAMSATAN</option>
+                                <option value="PC & PRINTER KESAMSATAN">PC & PRINTER KESAMSATAN</option>
                               </select>
                             </div>
-                            <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3">
-                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Jumlah Diminta</p>
-                              <input
-                                type="number"
-                                min={0}
-                                value={requestDraft.requestedCount}
-                                onChange={(e) => persistRequestDraft({ ...requestDraft, requestedCount: Math.max(0, Number(e.target.value || 0)) })}
-                                className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-2 text-xs font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                              />
-                              {suratOk && (
-                                <div className="mt-3 text-[10px] font-black text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-2xl px-4 py-2">
-                                  SURAT SUDAH MASUK DALAM PROSES DISPOSISI
+                            {requestDraft.requestType === 'PC & PRINTER KESAMSATAN' ? (
+                              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3">
+                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Jumlah Diminta</p>
+                                <div className="grid grid-cols-2 gap-3">
+                                  <div>
+                                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">PC</p>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      value={requestDraft.requestedCountPC}
+                                      onChange={(e) =>
+                                        persistRequestDraft({ ...requestDraft, requestedCountPC: Math.max(0, Number(e.target.value || 0)) })
+                                      }
+                                      className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-2 text-xs font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                                    />
+                                  </div>
+                                  <div>
+                                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">PRINTER</p>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      value={requestDraft.requestedCountPrinter}
+                                      onChange={(e) =>
+                                        persistRequestDraft({ ...requestDraft, requestedCountPrinter: Math.max(0, Number(e.target.value || 0)) })
+                                      }
+                                      className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-2 text-xs font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                                    />
+                                  </div>
                                 </div>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="border border-slate-100 rounded-3xl p-5">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Berita Acara Serah Terima Barang</p>
-                              <p className="text-xs font-black text-slate-900 mt-1">Upload berita acara (opsional)</p>
-                            </div>
-                            <div className={`px-3 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-2 ${getStatusBadge(requestDraft.beritaAcara ? 'ok' : 'pending').className}`}>
-                              {getStatusBadge(requestDraft.beritaAcara ? 'ok' : 'pending').icon}
-                              {getStatusBadge(requestDraft.beritaAcara ? 'ok' : 'pending').text}
-                            </div>
-                          </div>
-                          <div className="mt-4 bg-slate-50 border border-slate-100 rounded-2xl p-3">
-                            <label className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-2 flex items-center justify-center gap-2 font-bold text-xs text-slate-700 hover:bg-slate-50 cursor-pointer">
-                              <FileUp className="w-5 h-5 text-slate-500" />
-                              <span>{requestDraft.beritaAcara ? 'Ganti Berita Acara' : 'Pilih Berita Acara'}</span>
-                              <input type="file" className="hidden" accept="application/pdf,.pdf" onChange={handleBeritaAcaraUpload} />
-                            </label>
-                            {requestDraft.beritaAcara ? (
-                              <div className="mt-3 flex items-center justify-between gap-3">
-                                <p className="text-xs font-bold text-slate-600 truncate">{requestDraft.beritaAcara.fileName}</p>
-                                <div className="flex items-center gap-3">
-                                  {requestDraft.beritaAcara.dataUrl ? (
-                                    <button
-                                      onClick={() => window.open(requestDraft.beritaAcara?.dataUrl || '', '_blank')}
-                                      className="text-xs font-black text-blue-600 hover:text-blue-700"
-                                    >
-                                      Download
-                                    </button>
-                                  ) : null}
-                                  <button onClick={handleRemoveBeritaAcara} className="text-xs font-black text-rose-600 hover:text-rose-700">
-                                    Hapus
-                                  </button>
-                                </div>
+                                {suratOk && (
+                                  <div className="mt-3 text-[10px] font-black text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-2xl px-4 py-2">
+                                    SURAT SUDAH MASUK DALAM PROSES DISPOSISI
+                                  </div>
+                                )}
                               </div>
-                            ) : null}
-                            <p className="mt-2 text-[10px] font-bold text-slate-400">Format: PDF • Maks 2MB</p>
+                            ) : (
+                              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3">
+                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Jumlah Diminta</p>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  value={requestDraft.requestedCount}
+                                  onChange={(e) => persistRequestDraft({ ...requestDraft, requestedCount: Math.max(0, Number(e.target.value || 0)) })}
+                                  className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-2 text-xs font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                                />
+                                {suratOk && (
+                                  <div className="mt-3 text-[10px] font-black text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-2xl px-4 py-2">
+                                    SURAT SUDAH MASUK DALAM PROSES DISPOSISI
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </div>
 
@@ -3062,7 +3082,7 @@ function App() {
                                 const nextStatus = e.target.value as ApprovalStatus;
                                 persistRequestDraft({
                                   ...requestDraft,
-                                  kabid: { status: nextStatus, approvedCount: nextStatus === 'approved' ? (requestDraft.kabid.approvedCount ?? requestDraft.requestedCount) : null }
+                                  kabid: { status: nextStatus, approvedCount: nextStatus === 'approved' ? (requestDraft.kabid.approvedCount ?? totalRequested) : null }
                                 });
                               }}
                               className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-2 text-xs font-black text-slate-900"
@@ -3101,7 +3121,7 @@ function App() {
                                 const nextStatus = e.target.value as ApprovalStatus;
                                 persistRequestDraft({
                                   ...requestDraft,
-                                  sekban: { status: nextStatus, approvedCount: nextStatus === 'approved' ? (requestDraft.sekban.approvedCount ?? requestDraft.requestedCount) : null }
+                                  sekban: { status: nextStatus, approvedCount: nextStatus === 'approved' ? (requestDraft.sekban.approvedCount ?? totalRequested) : null }
                                 });
                               }}
                               className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-2 text-xs font-black text-slate-900"
@@ -3140,16 +3160,18 @@ function App() {
               <div className="p-6 md:p-10 overflow-y-auto max-h-[calc(100vh-2rem)]">
                 <div className="mb-6">
                   <h3 className="text-xl font-black text-slate-900">Tambah Perangkat — {requestDraft.samsat}</h3>
-                  <p className="text-xs text-slate-500 font-bold mt-1">Input perangkat mengikuti status stok. Disposisi ditampilkan sebagai status.</p>
+                  <p className="text-xs text-slate-500 font-bold mt-1">Input perangkat hanya mengikuti status stok dan jumlah permintaan.</p>
                 </div>
 
                 {(() => {
-                  const suratOk = !!requestDraft.letter && requestDraft.requestedCount > 0;
+                  const totalRequested =
+                    requestDraft.requestType === 'PC & PRINTER KESAMSATAN'
+                      ? Math.max(0, Number(requestDraft.requestedCountPC || 0)) + Math.max(0, Number(requestDraft.requestedCountPrinter || 0))
+                      : Math.max(0, Number(requestDraft.requestedCount || 0));
+                  const suratOk = !!requestDraft.letter && totalRequested > 0;
                   const stockOk = requestDraft.stockStatus === 'ready';
                   const stockNo = requestDraft.stockStatus === 'empty';
                   const stockBadge = getStatusBadge(stockOk ? 'ok' : stockNo ? 'no' : 'pending');
-                  const kabidBadge = getStatusBadge(requestDraft.kabid.status === 'approved' ? 'ok' : requestDraft.kabid.status === 'rejected' ? 'no' : 'pending');
-                  const sekbanBadge = getStatusBadge(requestDraft.sekban.status === 'approved' ? 'ok' : requestDraft.sekban.status === 'rejected' ? 'no' : 'pending');
 
                   const approvedCount = getApprovedCount(requestDraft);
                   const remaining = approvedCount - requestDraft.addedDeviceIds.length;
@@ -3162,7 +3184,10 @@ function App() {
                           <div className="flex items-center justify-between">
                             <div>
                               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Surat & Jumlah</p>
-                              <p className="text-sm font-black text-slate-900 mt-1">{requestDraft.requestType} • {requestDraft.requestedCount} unit</p>
+                              <p className="text-sm font-black text-slate-900 mt-1">{requestDraft.requestType} • {totalRequested} unit</p>
+                              {requestDraft.requestType === 'PC & PRINTER KESAMSATAN' ? (
+                                <p className="text-xs font-bold text-slate-500 mt-1">PC: {requestDraft.requestedCountPC} • PRINTER: {requestDraft.requestedCountPrinter}</p>
+                              ) : null}
                               <p className="text-xs font-bold text-slate-500 mt-1">{requestDraft.letter ? requestDraft.letter.fileName : 'Belum ada surat'}</p>
                             </div>
                             <div className={`px-3 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-2 ${getStatusBadge(suratOk ? 'ok' : 'pending').className}`}>
@@ -3191,36 +3216,6 @@ function App() {
                             <div className={`px-3 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-2 ${stockBadge.className}`}>
                               {stockBadge.icon}
                               {stockBadge.text}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="border border-slate-100 rounded-3xl p-5">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Disposisi Kabid IPSIPD</p>
-                              <p className="text-sm font-black text-slate-900 mt-1">
-                                {requestDraft.kabid.status === 'approved' ? 'Setuju' : requestDraft.kabid.status === 'rejected' ? 'Tidak Setuju' : 'Dalam Proses'}
-                              </p>
-                            </div>
-                            <div className={`px-3 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-2 ${kabidBadge.className}`}>
-                              {kabidBadge.icon}
-                              {kabidBadge.text}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="border border-slate-100 rounded-3xl p-5">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Disposisi Sekretaris Badan</p>
-                              <p className="text-sm font-black text-slate-900 mt-1">
-                                {requestDraft.sekban.status === 'approved' ? 'Setuju' : requestDraft.sekban.status === 'rejected' ? 'Tidak Setuju' : 'Dalam Proses'}
-                              </p>
-                            </div>
-                            <div className={`px-3 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-2 ${sekbanBadge.className}`}>
-                              {sekbanBadge.icon}
-                              {sekbanBadge.text}
                             </div>
                           </div>
                         </div>
@@ -3831,10 +3826,14 @@ function App() {
                 </div>
 
                 {(() => {
-                  const suratOk = !!requestStatusDraft.letter && requestStatusDraft.requestedCount > 0;
+                  const totalRequested =
+                    requestStatusDraft.requestType === 'PC & PRINTER KESAMSATAN'
+                      ? Math.max(0, Number(requestStatusDraft.requestedCountPC || 0)) + Math.max(0, Number(requestStatusDraft.requestedCountPrinter || 0))
+                      : Math.max(0, Number(requestStatusDraft.requestedCount || 0));
+                  const suratOk = !!requestStatusDraft.letter && totalRequested > 0;
                   const stockOk = requestStatusDraft.stockStatus === 'ready';
                   const stockNo = requestStatusDraft.stockStatus === 'empty';
-                  const inputTotal = Math.max(0, Number(requestStatusDraft.requestedCount || 0));
+                  const inputTotal = Math.max(0, Number(totalRequested || 0));
                   const inputDone = requestStatusDraft.addedDeviceIds.length;
                   const inputOk = stockOk && inputTotal > 0 && inputDone >= inputTotal;
 
@@ -3844,7 +3843,10 @@ function App() {
                         <div className="flex items-center justify-between">
                           <div>
                             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Surat & Jumlah</p>
-                            <p className="text-sm font-black text-slate-900 mt-1">{requestStatusDraft.requestType} • {requestStatusDraft.requestedCount} unit</p>
+                            <p className="text-sm font-black text-slate-900 mt-1">{requestStatusDraft.requestType} • {inputTotal} unit</p>
+                            {requestStatusDraft.requestType === 'PC & PRINTER KESAMSATAN' ? (
+                              <p className="text-xs font-bold text-slate-500 mt-1">PC: {requestStatusDraft.requestedCountPC} • PRINTER: {requestStatusDraft.requestedCountPrinter}</p>
+                            ) : null}
                             <p className="text-xs font-bold text-slate-500 mt-1">{requestStatusDraft.letter ? requestStatusDraft.letter.fileName : 'Belum ada surat'}</p>
                           </div>
                           <div className={`px-3 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-2 ${getStatusBadge(suratOk ? 'ok' : 'pending').className}`}>
@@ -3852,14 +3854,6 @@ function App() {
                             {getStatusBadge(suratOk ? 'ok' : 'pending').text}
                           </div>
                         </div>
-                        {requestStatusDraft.letter?.dataUrl ? (
-                          <button
-                            onClick={() => window.open(requestStatusDraft.letter?.dataUrl || '', '_blank')}
-                            className="mt-4 w-full bg-slate-900 hover:bg-slate-950 text-white py-3 rounded-2xl font-black text-xs"
-                          >
-                            Download Surat (PDF)
-                          </button>
-                        ) : null}
                       </div>
 
                       <div className="border border-slate-100 rounded-3xl p-5">
@@ -3873,7 +3867,7 @@ function App() {
                             {getStatusBadge(requestStatusDraft.beritaAcara ? 'ok' : 'pending').text}
                           </div>
                         </div>
-                        {requestStatusDraft.beritaAcara?.dataUrl ? (
+                        {inputOk && requestStatusDraft.beritaAcara?.dataUrl ? (
                           <button
                             onClick={() => window.open(requestStatusDraft.beritaAcara?.dataUrl || '', '_blank')}
                             className="mt-4 w-full bg-white border border-slate-200 hover:bg-slate-50 text-slate-900 py-3 rounded-2xl font-black text-xs"

@@ -1,6 +1,6 @@
 type StockStatus = 'ready' | 'empty' | 'standby'
 type ApprovalStatus = 'approved' | 'rejected' | 'pending'
-type RequestType = 'PC KESAMSATAN' | 'PRINTER KESAMSATAN'
+type RequestType = 'PC KESAMSATAN' | 'PRINTER KESAMSATAN' | 'PC & PRINTER KESAMSATAN'
 
 interface DeviceRequestLetterMeta {
   fileName: string
@@ -13,6 +13,8 @@ interface DeviceRequestState {
   samsat: string
   requestType: RequestType
   requestedCount: number
+  requestedCountPC: number
+  requestedCountPrinter: number
   letter: DeviceRequestLetterMeta | null
   beritaAcara: DeviceRequestLetterMeta | null
   stockStatus: StockStatus
@@ -42,6 +44,7 @@ interface Env {
 }
 
 let deviceRequestsHasFileColumnsCache: boolean | null = null
+let deviceRequestsHasCountColumnsCache: boolean | null = null
 
 const json = (data: unknown, init?: ResponseInit) =>
   new Response(JSON.stringify(data), {
@@ -58,6 +61,8 @@ const createDefaultRequest = (samsat: string): DeviceRequestState => ({
   samsat,
   requestType: 'PC KESAMSATAN',
   requestedCount: 0,
+  requestedCountPC: 0,
+  requestedCountPrinter: 0,
   letter: null,
   beritaAcara: null,
   stockStatus: 'standby',
@@ -93,6 +98,19 @@ const hasFileColumns = async (db: D1Database) => {
   }
 }
 
+const hasCountColumns = async (db: D1Database) => {
+  if (deviceRequestsHasCountColumnsCache !== null) return deviceRequestsHasCountColumnsCache
+  try {
+    const res = await db.prepare("PRAGMA table_info('device_requests')").all<Record<string, unknown>>()
+    const names = new Set(res.results.map(r => String(r.name || '').toLowerCase()))
+    deviceRequestsHasCountColumnsCache = names.has('requested_count_pc') && names.has('requested_count_printer')
+    return deviceRequestsHasCountColumnsCache
+  } catch {
+    deviceRequestsHasCountColumnsCache = false
+    return false
+  }
+}
+
 const parseRequestRow = (row: Record<string, unknown>): DeviceRequestState => {
   const samsat = String(row.samsat || row.samsat_id || '')
   const addedRaw = String(row.added_device_ids_json || '[]')
@@ -123,6 +141,10 @@ const parseRequestRow = (row: Record<string, unknown>): DeviceRequestState => {
 
   const requestType = (String(row.request_type || 'PC KESAMSATAN') as RequestType) || 'PC KESAMSATAN'
   const requestedCount = Math.max(0, Number(row.requested_count || 0))
+  const hasPc = row.requested_count_pc !== undefined
+  const hasPrinter = row.requested_count_printer !== undefined
+  const requestedCountPC = hasPc ? Math.max(0, Number(row.requested_count_pc || 0)) : requestType === 'PC & PRINTER KESAMSATAN' ? requestedCount : 0
+  const requestedCountPrinter = hasPrinter ? Math.max(0, Number(row.requested_count_printer || 0)) : 0
   const stockStatus = (String(row.stock_status || 'standby') as StockStatus) || 'standby'
 
   const kabidStatus = (String(row.kabid_status || 'pending') as ApprovalStatus) || 'pending'
@@ -134,6 +156,8 @@ const parseRequestRow = (row: Record<string, unknown>): DeviceRequestState => {
     samsat,
     requestType,
     requestedCount,
+    requestedCountPC,
+    requestedCountPrinter,
     letter,
     beritaAcara,
     stockStatus,
@@ -187,7 +211,11 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
   const samsatId = await ensureSamsat(env.DB, samsat)
 
   const requestType = String(payload.requestType || 'PC KESAMSATAN').trim()
-  const requestedCount = Math.max(0, Number(payload.requestedCount || 0))
+  const requestedCountPC = Math.max(0, Number(payload.requestedCountPC || 0))
+  const requestedCountPrinter = Math.max(0, Number(payload.requestedCountPrinter || 0))
+  const requestedCountRaw = Math.max(0, Number(payload.requestedCount || 0))
+  const requestedCount =
+    requestType === 'PC & PRINTER KESAMSATAN' ? requestedCountPC + requestedCountPrinter : requestedCountRaw
   const stockStatus = String(payload.stockStatus || 'standby').trim()
 
   const kabid = payload.kabid && typeof payload.kabid === 'object' ? (payload.kabid as Record<string, unknown>) : {}
@@ -220,15 +248,17 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
   const createdAt = existing?.created_at ? String(existing.created_at) : now
 
   const withFiles = await hasFileColumns(env.DB)
+  const withCounts = await hasCountColumns(env.DB)
   if (withFiles) {
     await env.DB
       .prepare(
         `INSERT INTO device_requests
-         (samsat_id, request_type, requested_count, stock_status, kabid_status, kabid_approved_count, sekban_status, sekban_approved_count, added_device_ids_json, finalized_at, letter_file_name, letter_mime_type, letter_uploaded_at, letter_data_url, ba_file_name, ba_mime_type, ba_uploaded_at, ba_data_url, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         (samsat_id, request_type, requested_count, ${withCounts ? 'requested_count_pc, requested_count_printer,' : ''} stock_status, kabid_status, kabid_approved_count, sekban_status, sekban_approved_count, added_device_ids_json, finalized_at, letter_file_name, letter_mime_type, letter_uploaded_at, letter_data_url, ba_file_name, ba_mime_type, ba_uploaded_at, ba_data_url, created_at, updated_at)
+         VALUES (?, ?, ?, ${withCounts ? '?, ?,' : ''} ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(samsat_id) DO UPDATE SET
            request_type=excluded.request_type,
            requested_count=excluded.requested_count,
+           ${withCounts ? 'requested_count_pc=excluded.requested_count_pc, requested_count_printer=excluded.requested_count_printer,' : ''}
            stock_status=excluded.stock_status,
            kabid_status=excluded.kabid_status,
            kabid_approved_count=excluded.kabid_approved_count,
@@ -250,6 +280,7 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
         samsatId,
         requestType,
         requestedCount,
+        ...(withCounts ? [requestedCountPC, requestedCountPrinter] : []),
         stockStatus,
         kabidStatus,
         Number.isFinite(kabidApprovedCount as number) ? kabidApprovedCount : null,
@@ -273,11 +304,12 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
     await env.DB
       .prepare(
         `INSERT INTO device_requests
-         (samsat_id, request_type, requested_count, stock_status, kabid_status, kabid_approved_count, sekban_status, sekban_approved_count, added_device_ids_json, finalized_at, letter_file_name, letter_mime_type, letter_uploaded_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         (samsat_id, request_type, requested_count, ${withCounts ? 'requested_count_pc, requested_count_printer,' : ''} stock_status, kabid_status, kabid_approved_count, sekban_status, sekban_approved_count, added_device_ids_json, finalized_at, letter_file_name, letter_mime_type, letter_uploaded_at, created_at, updated_at)
+         VALUES (?, ?, ?, ${withCounts ? '?, ?,' : ''} ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(samsat_id) DO UPDATE SET
            request_type=excluded.request_type,
            requested_count=excluded.requested_count,
+           ${withCounts ? 'requested_count_pc=excluded.requested_count_pc, requested_count_printer=excluded.requested_count_printer,' : ''}
            stock_status=excluded.stock_status,
            kabid_status=excluded.kabid_status,
            kabid_approved_count=excluded.kabid_approved_count,
@@ -294,6 +326,7 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
         samsatId,
         requestType,
         requestedCount,
+        ...(withCounts ? [requestedCountPC, requestedCountPrinter] : []),
         stockStatus,
         kabidStatus,
         Number.isFinite(kabidApprovedCount as number) ? kabidApprovedCount : null,
