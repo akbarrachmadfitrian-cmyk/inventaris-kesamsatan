@@ -705,8 +705,14 @@ function App() {
     if (session?.role === 'admin') {
       const key = String(localStorage.getItem('admin_api_key') || '').trim();
       if (key) axios.defaults.headers.common['x-admin-key'] = key;
+      delete axios.defaults.headers.common['x-user-key'];
+    } else if (session?.role === 'user') {
+      const key = String(localStorage.getItem('user_api_key') || '').trim();
+      if (key) axios.defaults.headers.common['x-user-key'] = key;
+      delete axios.defaults.headers.common['x-admin-key'];
     } else {
       delete axios.defaults.headers.common['x-admin-key'];
+      delete axios.defaults.headers.common['x-user-key'];
     }
   }, [session?.role]);
 
@@ -733,7 +739,16 @@ function App() {
         localStorage.setItem('admin_api_key', key);
         axios.defaults.headers.common['x-admin-key'] = key;
       }
+      delete axios.defaults.headers.common['x-user-key'];
     } else {
+      const existingKey = String(localStorage.getItem('user_api_key') || '').trim();
+      const key =
+        existingKey ||
+        String(window.prompt('Masukkan User API Key (untuk akses aplikasi):') || '').trim();
+      if (key) {
+        localStorage.setItem('user_api_key', key);
+        axios.defaults.headers.common['x-user-key'] = key;
+      }
       delete axios.defaults.headers.common['x-admin-key'];
     }
     setAuthUsername('');
@@ -754,6 +769,7 @@ function App() {
     setSession(null);
     clearAuthSession();
     delete axios.defaults.headers.common['x-admin-key'];
+    delete axios.defaults.headers.common['x-user-key'];
     setAuthTab('admin');
     setAuthUsername('');
     setAuthPassword('');

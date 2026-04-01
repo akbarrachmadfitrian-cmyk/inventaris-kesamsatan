@@ -78,14 +78,17 @@ Ini dipakai untuk submit:
 
 ## Alternatif Gratis Tanpa Cloudflare Access
 
-Jika Zero Trust/Access tetap meminta metode pembayaran dan Anda tidak bisa menambahkannya, aplikasi tetap bisa membatasi endpoint admin dengan API Key di server.
+Jika Zero Trust/Access tetap meminta metode pembayaran dan Anda tidak bisa menambahkannya, aplikasi tetap bisa menutup akses publik dengan API Key di server.
 
 ### Cara pakai
 
 1. Di Cloudflare Pages → **Settings → Environment variables**, tambahkan:
    - `ADMIN_API_KEY` = nilai rahasia (misalnya string random panjang)
+   - `USER_API_KEY` = nilai rahasia (misalnya string random panjang)
 2. Saat login sebagai admin di aplikasi, akan muncul prompt untuk mengisi **Admin API Key**.
-3. Endpoint admin hanya bisa dipanggil jika request memiliki header:
-   - `x-admin-key: <ADMIN_API_KEY>`
+3. Saat login sebagai user di aplikasi, akan muncul prompt untuk mengisi **User API Key**.
+4. Endpoint hanya bisa dipanggil jika request memiliki header:
+   - Public & user endpoint: `x-user-key: <USER_API_KEY>` (atau `x-admin-key` untuk admin)
+   - Admin endpoint: `x-admin-key: <ADMIN_API_KEY>`
 
-Catatan: alternatif ini hanya mengunci endpoint admin (`/api/admin/*`). Endpoint public/user tetap mengikuti rule akses yang Anda atur sendiri.
+Catatan: dengan cara ini, membuka URL endpoint langsung (tanpa header key) akan ditolak (403), sehingga akses umum tertutup.

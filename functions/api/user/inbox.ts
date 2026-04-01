@@ -2,6 +2,8 @@ type InboxKind = 'damage_report' | 'device_request'
 
 interface Env {
   INBOX_KV?: KVNamespace
+  USER_API_KEY?: string
+  ADMIN_API_KEY?: string
 }
 
 interface KVNamespace {
@@ -35,6 +37,16 @@ const newId = () => {
 
 export async function onRequestPost({ request, env }: { request: Request; env: Env }) {
   if (!env.INBOX_KV) return json({ error: 'KV binding INBOX_KV belum dikonfigurasi' }, { status: 500 })
+
+  const expectedUser = String(env.USER_API_KEY || '')
+  const expectedAdmin = String(env.ADMIN_API_KEY || '')
+  if (!expectedUser && !expectedAdmin) return json({ error: 'USER_API_KEY/ADMIN_API_KEY belum dikonfigurasi' }, { status: 500 })
+
+  const userKey = String(request.headers.get('x-user-key') || '')
+  const adminKey = String(request.headers.get('x-admin-key') || '')
+  if (!((expectedUser && userKey === expectedUser) || (expectedAdmin && adminKey === expectedAdmin))) {
+    return json({ error: 'Akses ditolak' }, { status: 403 })
+  }
 
   let body: unknown
   try {
@@ -70,4 +82,3 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
   await env.INBOX_KV.put(`msg:${id}`, JSON.stringify(msg))
   return json({ ok: true, id }, { status: 200 })
 }
-
