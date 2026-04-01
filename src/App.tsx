@@ -2749,6 +2749,30 @@ function App() {
                           />
                         </div>
                       </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Tahun Anggaran</label>
+                          <input
+                            type="text"
+                            value={(editForm as Partial<Device>).budgetYear || ''}
+                            onChange={e => setEditForm({ ...editForm, budgetYear: e.target.value } as Partial<Device>)}
+                            className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm focus:ring-2 focus:ring-blue-500/20 outline-none"
+                            placeholder="Contoh: 2026"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Sumber Anggaran</label>
+                          <select
+                            value={(editForm as Partial<Device>).budgetSource || 'APBD'}
+                            onChange={e => setEditForm({ ...editForm, budgetSource: e.target.value } as Partial<Device>)}
+                            className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm focus:ring-2 focus:ring-blue-500/20 outline-none"
+                          >
+                            <option value="APBD">APBD</option>
+                            <option value="Cost Sharing">Cost Sharing</option>
+                            <option value="Hibah Bank Kalsel">Hibah Bank Kalsel</option>
+                          </select>
+                        </div>
+                      </div>
                       <div className="flex gap-4 pt-4">
                         <button 
                           onClick={handleUpdateDevice}
