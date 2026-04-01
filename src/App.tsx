@@ -56,6 +56,7 @@ interface DeviceRequestLetter {
 }
 
 interface DeviceRequest {
+  requestId: string;
   samsat: string;
   requestType: RequestType;
   requestedCount: number;
@@ -68,6 +69,8 @@ interface DeviceRequest {
   sekban: { status: ApprovalStatus; approvedCount: number | null };
   addedDeviceIds: string[];
   finalizedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 const LS_DELETED_DEVICE_IDS = 'samsat_deleted_device_ids';
@@ -391,6 +394,7 @@ const loadDeviceRequests = () => safeParseJSON<Record<string, DeviceRequest>>(lo
 const saveDeviceRequests = (requests: Record<string, DeviceRequest>) => localStorage.setItem(LS_DEVICE_REQUESTS, JSON.stringify(requests));
 
 const createDefaultRequest = (samsat: string): DeviceRequest => ({
+  requestId: '',
   samsat,
   requestType: 'PC KESAMSATAN',
   requestedCount: 0,
@@ -402,7 +406,9 @@ const createDefaultRequest = (samsat: string): DeviceRequest => ({
   kabid: { status: 'pending', approvedCount: null },
   sekban: { status: 'pending', approvedCount: null },
   addedDeviceIds: [],
-  finalizedAt: null
+  finalizedAt: null,
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString()
 });
 
 const getStatusBadge = (status: 'ok' | 'no' | 'pending') => {
@@ -606,7 +612,11 @@ function App() {
   const [dashboardDevicesModalFilter, setDashboardDevicesModalFilter] = useState<'all' | 'Baik' | 'Kurang Baik' | 'Rusak'>('all');
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
   const [requestDraft, setRequestDraft] = useState<DeviceRequest | null>(null);
+  const [isRequestHubOpen, setIsRequestHubOpen] = useState(false);
+  const [requestHistoryItems, setRequestHistoryItems] = useState<DeviceRequest[]>([]);
+  const [requestHistoryLoading, setRequestHistoryLoading] = useState(false);
   const [isAddDeviceModalOpen, setIsAddDeviceModalOpen] = useState(false);
+  const [isAddDevicePickerOpen, setIsAddDevicePickerOpen] = useState(false);
   const [isRequestStatusOpen, setIsRequestStatusOpen] = useState(false);
   const [requestStatusDraft, setRequestStatusDraft] = useState<DeviceRequest | null>(null);
   const [requestStatusLoading, setRequestStatusLoading] = useState(false);
@@ -1335,8 +1345,19 @@ function App() {
     });
   };
 
-  const fetchRequestFromApi = async (samsat: string) => {
+  const fetchRequestHistoryFromApi = async (samsat: string) => {
     const res = await axios.get('/api/device-requests', { params: { samsat }, timeout: 8000 });
+    return (res.data?.items || []) as DeviceRequest[];
+  };
+
+  const fetchRequestByIdFromApi = async (requestId: string) => {
+    const res = await axios.get('/api/device-requests', { params: { requestId }, timeout: 8000 });
+    return (res.data?.item || null) as DeviceRequest | null;
+  };
+
+  const createRequestInApi = async (samsat: string) => {
+    const base = createDefaultRequest(samsat);
+    const res = await axios.post('/api/device-requests', { action: 'create', payload: base }, { timeout: 8000 });
     return (res.data?.item || null) as DeviceRequest | null;
   };
 
@@ -1344,53 +1365,61 @@ function App() {
     await axios.post('/api/device-requests', { action: 'save', payload }, { timeout: 8000 });
   };
 
-  const openRequestModal = async () => {
+  const deleteRequestInApi = async (payload: Pick<DeviceRequest, 'requestId' | 'samsat'>) => {
+    await axios.post('/api/device-requests', { action: 'delete', payload }, { timeout: 8000 });
+  };
+
+  const openRequestHubModal = async () => {
+    if (strictSheetSync) return;
+    if (!activeSamsat) return;
+    setIsRequestHubOpen(true);
+    setRequestHistoryLoading(true);
+    try {
+      if (dbAvailable) {
+        const items = await fetchRequestHistoryFromApi(activeSamsat);
+        setRequestHistoryItems(items);
+      } else {
+        const reqRaw = loadDeviceRequests()[activeSamsat] || createDefaultRequest(activeSamsat);
+        setRequestHistoryItems([{ ...createDefaultRequest(activeSamsat), ...reqRaw }]);
+      }
+    } finally {
+      setRequestHistoryLoading(false);
+    }
+  };
+
+  const openRequestEditor = async (requestId: string) => {
     if (strictSheetSync) return;
     if (!isAdmin) return;
     if (!activeSamsat) return;
     let req: DeviceRequest | null = null;
     if (dbAvailable) {
       try {
-        const fetched = await fetchRequestFromApi(activeSamsat);
-        req = fetched ? { ...createDefaultRequest(activeSamsat), ...fetched } : null;
+        req = await fetchRequestByIdFromApi(requestId);
       } catch {
         req = null;
       }
     }
-    if (!req) {
-      const requests = loadDeviceRequests();
-      const reqRaw = requests[activeSamsat] || createDefaultRequest(activeSamsat);
-      req = {
-        ...createDefaultRequest(activeSamsat),
-        ...reqRaw,
-        requestType: (reqRaw as DeviceRequest).requestType || 'PC KESAMSATAN'
-      };
-    }
-    setRequestDraft(req);
-    setNewDeviceDraft({ condition: 'Baik', samsat: activeSamsat });
+    if (!req) return;
+    setRequestDraft({ ...createDefaultRequest(req.samsat), ...req });
+    setNewDeviceDraft({ condition: 'Baik', samsat: req.samsat });
     setIsRequestModalOpen(true);
   };
 
-  const openAddDeviceModal = async () => {
+  const openAddDeviceModal = async (requestId: string) => {
     if (strictSheetSync) return;
     if (!isAdmin) return;
     if (!activeSamsat) return;
     let req: DeviceRequest | null = null;
     if (dbAvailable) {
       try {
-        const fetched = await fetchRequestFromApi(activeSamsat);
-        req = fetched ? { ...createDefaultRequest(activeSamsat), ...fetched } : null;
+        req = await fetchRequestByIdFromApi(requestId);
       } catch {
         req = null;
       }
     }
-    if (!req) {
-      const requests = loadDeviceRequests();
-      const reqRaw = requests[activeSamsat] || createDefaultRequest(activeSamsat);
-      req = { ...createDefaultRequest(activeSamsat), ...reqRaw };
-    }
-    setRequestDraft(req);
-    setNewDeviceDraft({ condition: 'Baik', samsat: activeSamsat });
+    if (!req) return;
+    setRequestDraft({ ...createDefaultRequest(req.samsat), ...req });
+    setNewDeviceDraft({ condition: 'Baik', samsat: req.samsat });
     setIsAddDeviceModalOpen(true);
   };
 
@@ -1399,6 +1428,7 @@ function App() {
     if (!isAdmin) return;
     if (dbAvailable) {
       try {
+        if (!next.requestId) return;
         await saveRequestToApi(next);
       } catch {
         window.alert('Gagal menyimpan data permintaan ke database.');
@@ -1410,27 +1440,83 @@ function App() {
     setRequestDraft(next);
   };
 
-  const openRequestStatusModal = async () => {
+  const openRequestStatusModal = async (requestId: string) => {
     if (!activeSamsat) return;
     setRequestStatusLoading(true);
     try {
       let req: DeviceRequest | null = null;
       if (dbAvailable) {
         try {
-          const fetched = await fetchRequestFromApi(activeSamsat);
-          req = fetched ? { ...createDefaultRequest(activeSamsat), ...fetched } : null;
+          req = await fetchRequestByIdFromApi(requestId);
         } catch {
           req = null;
         }
       }
-      if (!req) {
-        const reqRaw = loadDeviceRequests()[activeSamsat] || createDefaultRequest(activeSamsat);
-        req = { ...createDefaultRequest(activeSamsat), ...reqRaw };
-      }
-      setRequestStatusDraft(req);
+      if (!req) return;
+      setRequestStatusDraft({ ...createDefaultRequest(req.samsat), ...req });
       setIsRequestStatusOpen(true);
     } finally {
       setRequestStatusLoading(false);
+    }
+  };
+
+  const openAddDevicePicker = async () => {
+    if (strictSheetSync) return;
+    if (!isAdmin) return;
+    if (!activeSamsat) return;
+    setRequestHistoryLoading(true);
+    try {
+      if (dbAvailable) {
+        const items = await fetchRequestHistoryFromApi(activeSamsat);
+        setRequestHistoryItems(items);
+        if (items.length === 1) {
+          await openAddDeviceModal(items[0].requestId);
+        } else {
+          setIsAddDevicePickerOpen(true);
+        }
+      } else {
+        window.alert('History permintaan membutuhkan database.');
+      }
+    } finally {
+      setRequestHistoryLoading(false);
+    }
+  };
+
+  const createNewRequestFromHub = async () => {
+    if (strictSheetSync) return;
+    if (!isAdmin) return;
+    if (!activeSamsat) return;
+    setRequestHistoryLoading(true);
+    try {
+      if (!dbAvailable) {
+        window.alert('Database belum aktif.');
+        return;
+      }
+      const created = await createRequestInApi(activeSamsat);
+      const items = await fetchRequestHistoryFromApi(activeSamsat);
+      setRequestHistoryItems(items);
+      if (created?.requestId) {
+        await openRequestEditor(created.requestId);
+      }
+    } catch {
+      window.alert('Gagal membuat permintaan baru.');
+    } finally {
+      setRequestHistoryLoading(false);
+    }
+  };
+
+  const deleteRequestFromHub = async (req: DeviceRequest) => {
+    if (!isAdmin) return;
+    const ok = window.confirm('apakah anda yakin ingin menghapus history permintaan ini?');
+    if (!ok) return;
+    try {
+      await deleteRequestInApi({ requestId: req.requestId, samsat: req.samsat });
+      if (activeSamsat) {
+        const items = await fetchRequestHistoryFromApi(activeSamsat);
+        setRequestHistoryItems(items);
+      }
+    } catch {
+      window.alert('Gagal menghapus history.');
     }
   };
 
@@ -2296,7 +2382,7 @@ function App() {
               </button>
               {isAdmin ? (
                 <button
-                  onClick={openRequestModal}
+                  onClick={openRequestHubModal}
                   className="w-full flex items-center gap-3 p-3 rounded-xl font-bold text-sm transition-all text-slate-500 hover:bg-slate-50"
                 >
                   <Send className="w-5 h-5" />
@@ -2304,7 +2390,7 @@ function App() {
                 </button>
               ) : (
                 <button
-                  onClick={openRequestStatusModal}
+                  onClick={openRequestHubModal}
                   disabled={requestStatusLoading}
                   className="w-full flex items-center gap-3 p-3 rounded-xl font-bold text-sm transition-all text-slate-500 hover:bg-slate-50 disabled:opacity-50"
                 >
@@ -2325,7 +2411,7 @@ function App() {
               )}
               {isAdmin && !strictSheetSync && (
                 <button
-                  onClick={openAddDeviceModal}
+                  onClick={openAddDevicePicker}
                   className="w-full flex items-center gap-3 p-3 rounded-xl font-bold text-sm transition-all text-slate-500 hover:bg-slate-50"
                 >
                   <Plus className="w-5 h-5" />
@@ -2573,7 +2659,7 @@ function App() {
                 {activeSamsat && (
                   isAdmin && !strictSheetSync ? (
                     <button
-                      onClick={openRequestModal}
+                      onClick={openAddDevicePicker}
                       className="px-5 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black transition-all shadow-lg shadow-blue-200 flex items-center gap-2"
                     >
                       <Plus className="w-5 h-5" />
@@ -2840,6 +2926,150 @@ function App() {
                     ))}
                   </div>
                 )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isRequestHubOpen && activeSamsat && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[3rem] w-full max-w-5xl max-h-[calc(100vh-2rem)] overflow-hidden shadow-2xl relative flex flex-col"
+            >
+              <div className="p-8 border-b border-slate-100 flex items-center justify-between shrink-0">
+                <div>
+                  <h3 className="text-2xl font-black text-slate-900">{isAdmin ? 'Permintaan Perangkat' : 'STATUS PERMINTAAN PERANGKAT'}</h3>
+                  <p className="text-sm font-bold text-slate-500 mt-1">{activeSamsat}</p>
+                </div>
+                <button onClick={() => setIsRequestHubOpen(false)} className="p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl transition-colors">
+                  <XCircle className="w-6 h-6 text-slate-400" />
+                </button>
+              </div>
+              <div className="p-8 overflow-y-auto flex-grow">
+                {isAdmin ? (
+                  <button
+                    onClick={createNewRequestFromHub}
+                    disabled={requestHistoryLoading}
+                    className="w-full mb-6 bg-slate-900 hover:bg-slate-950 text-white py-4 rounded-2xl font-black transition-all disabled:bg-slate-200 disabled:text-slate-500"
+                  >
+                    Tambah Permintaan Baru
+                  </button>
+                ) : null}
+
+                <div className="border border-slate-200 rounded-3xl overflow-hidden">
+                  <div className="bg-slate-50 p-4 border-b border-slate-200 flex items-center justify-between">
+                    <h4 className="text-lg font-black text-slate-900">History Permintaan Perangkat</h4>
+                    <span className="px-3 py-1 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600">
+                      {requestHistoryItems.length}
+                    </span>
+                  </div>
+                  {requestHistoryLoading ? (
+                    <div className="p-4 text-sm font-bold text-slate-600">Memuat...</div>
+                  ) : requestHistoryItems.length === 0 ? (
+                    <div className="p-4 text-sm font-bold text-slate-600">Belum ada permintaan.</div>
+                  ) : (
+                    <div className="divide-y divide-slate-100">
+                      {requestHistoryItems.map((r) => {
+                        const totalRequested =
+                          r.requestType === 'PC & PRINTER KESAMSATAN'
+                            ? Math.max(0, Number(r.requestedCountPC || 0)) + Math.max(0, Number(r.requestedCountPrinter || 0))
+                            : Math.max(0, Number(r.requestedCount || 0));
+                        const inputDone = r.addedDeviceIds.length;
+                        const inputOk = r.stockStatus === 'ready' && totalRequested > 0 && inputDone >= totalRequested;
+                        return (
+                          <div key={r.requestId || r.createdAt} className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-slate-50 transition-colors">
+                            <button
+                              onClick={() => (isAdmin ? openRequestEditor(r.requestId) : openRequestStatusModal(r.requestId))}
+                              className="text-left flex-grow min-w-0"
+                            >
+                              <p className="font-black text-slate-900 truncate">{r.requestType}</p>
+                              <p className="text-xs font-bold text-slate-500 mt-1">
+                                {new Date(r.createdAt).toLocaleString()} • {inputDone}/{totalRequested} perangkat
+                              </p>
+                              <p className="text-xs font-bold text-slate-500 mt-1">
+                                Stok: {r.stockStatus === 'ready' ? 'Ready' : r.stockStatus === 'empty' ? 'Empty' : 'Standby'}
+                                {' • '}
+                                Disposisi: Kabid {r.kabid.status === 'approved' ? 'Setuju' : r.kabid.status === 'rejected' ? 'Tidak' : 'Proses'} • Sekban {r.sekban.status === 'approved' ? 'Setuju' : r.sekban.status === 'rejected' ? 'Tidak' : 'Proses'}
+                              </p>
+                            </button>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span
+                                className={`text-[10px] font-black px-2 py-1 rounded-lg uppercase tracking-widest ${
+                                  inputOk ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'
+                                }`}
+                              >
+                                {inputOk ? 'Selesai' : 'Proses'}
+                              </span>
+                              {isAdmin ? (
+                                <>
+                                  <button
+                                    onClick={() => openAddDeviceModal(r.requestId)}
+                                    className="px-3 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-black transition-colors"
+                                  >
+                                    Input
+                                  </button>
+                                  <button
+                                    onClick={() => openRequestEditor(r.requestId)}
+                                    className="px-3 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-black transition-colors"
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    onClick={() => deleteRequestFromHub(r)}
+                                    className="p-2 rounded-xl hover:bg-rose-50 text-rose-600 transition-colors"
+                                    aria-label="Hapus history"
+                                  >
+                                    <Trash2 className="w-5 h-5" />
+                                  </button>
+                                </>
+                              ) : null}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isAddDevicePickerOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[3rem] w-full max-w-3xl max-h-[calc(100vh-2rem)] overflow-hidden shadow-2xl relative"
+            >
+              <button onClick={() => setIsAddDevicePickerOpen(false)} className="absolute top-8 right-8 p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl z-20">
+                <XCircle className="w-6 h-6 text-slate-400" />
+              </button>
+              <div className="p-6 md:p-10 overflow-y-auto max-h-[calc(100vh-2rem)]">
+                <div className="mb-6">
+                  <h3 className="text-xl font-black text-slate-900">Pilih Permintaan</h3>
+                  <p className="text-xs text-slate-500 font-bold mt-1">{activeSamsat}</p>
+                </div>
+                <div className="divide-y divide-slate-100 border border-slate-200 rounded-3xl overflow-hidden">
+                  {requestHistoryItems.map((r) => (
+                    <button
+                      key={r.requestId || r.createdAt}
+                      onClick={async () => { setIsAddDevicePickerOpen(false); await openAddDeviceModal(r.requestId); }}
+                      className="w-full text-left p-4 hover:bg-slate-50 transition-colors"
+                    >
+                      <p className="font-black text-slate-900">{r.requestType}</p>
+                      <p className="text-xs font-bold text-slate-500 mt-1">{new Date(r.createdAt).toLocaleString()}</p>
+                    </button>
+                  ))}
+                </div>
               </div>
             </motion.div>
           </div>

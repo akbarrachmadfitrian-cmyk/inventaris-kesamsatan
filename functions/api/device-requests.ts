@@ -10,6 +10,7 @@ interface DeviceRequestLetterMeta {
 }
 
 interface DeviceRequestState {
+  requestId: string
   samsat: string
   requestType: RequestType
   requestedCount: number
@@ -22,6 +23,8 @@ interface DeviceRequestState {
   sekban: { status: ApprovalStatus; approvedCount: number | null }
   addedDeviceIds: string[]
   finalizedAt: string | null
+  createdAt: string
+  updatedAt: string
 }
 
 interface D1Result<T> {
@@ -45,6 +48,7 @@ interface Env {
 
 let deviceRequestsHasFileColumnsCache: boolean | null = null
 let deviceRequestsHasCountColumnsCache: boolean | null = null
+let deviceRequestsHasHistoryTableCache: boolean | null = null
 
 const json = (data: unknown, init?: ResponseInit) =>
   new Response(JSON.stringify(data), {
@@ -57,7 +61,13 @@ const json = (data: unknown, init?: ResponseInit) =>
 
 const nowIso = () => new Date().toISOString()
 
+const newId = () => {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
+  return `id-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
 const createDefaultRequest = (samsat: string): DeviceRequestState => ({
+  requestId: '',
   samsat,
   requestType: 'PC KESAMSATAN',
   requestedCount: 0,
@@ -70,6 +80,8 @@ const createDefaultRequest = (samsat: string): DeviceRequestState => ({
   sekban: { status: 'pending', approvedCount: null },
   addedDeviceIds: [],
   finalizedAt: null,
+  createdAt: nowIso(),
+  updatedAt: nowIso(),
 })
 
 const ensureSamsat = async (db: D1Database, samsatName: string) => {
@@ -111,8 +123,23 @@ const hasCountColumns = async (db: D1Database) => {
   }
 }
 
+const hasHistoryTable = async (db: D1Database) => {
+  if (deviceRequestsHasHistoryTableCache !== null) return deviceRequestsHasHistoryTableCache
+  try {
+    const res = await db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='device_requests_history'")
+      .first<Record<string, unknown>>()
+    deviceRequestsHasHistoryTableCache = !!res
+    return deviceRequestsHasHistoryTableCache
+  } catch {
+    deviceRequestsHasHistoryTableCache = false
+    return false
+  }
+}
+
 const parseRequestRow = (row: Record<string, unknown>): DeviceRequestState => {
   const samsat = String(row.samsat || row.samsat_id || '')
+  const requestId = String(row.id || row.request_id || '')
   const addedRaw = String(row.added_device_ids_json || '[]')
   let addedDeviceIds: string[] = []
   try {
@@ -153,6 +180,7 @@ const parseRequestRow = (row: Record<string, unknown>): DeviceRequestState => {
   const sekbanApproved = row.sekban_approved_count === null || row.sekban_approved_count === undefined ? null : Number(row.sekban_approved_count)
 
   return {
+    requestId,
     samsat,
     requestType,
     requestedCount,
@@ -165,6 +193,8 @@ const parseRequestRow = (row: Record<string, unknown>): DeviceRequestState => {
     sekban: { status: sekbanStatus, approvedCount: Number.isFinite(sekbanApproved) ? sekbanApproved : null },
     addedDeviceIds,
     finalizedAt: row.finalized_at ? String(row.finalized_at) : null,
+    createdAt: row.created_at ? String(row.created_at) : nowIso(),
+    updatedAt: row.updated_at ? String(row.updated_at) : nowIso(),
   }
 }
 
@@ -172,7 +202,46 @@ export async function onRequestGet({ request, env }: { request: Request; env: En
   if (!env.DB) return json({ error: 'DB belum dikonfigurasi' }, { status: 500 })
   const url = new URL(request.url)
   const samsat = (url.searchParams.get('samsat') || '').trim()
+  const requestId = (url.searchParams.get('requestId') || '').trim()
+
+  const history = await hasHistoryTable(env.DB)
+
+  if (requestId) {
+    if (history) {
+      const row = await env.DB
+        .prepare(
+          `SELECT r.*, s.name AS samsat
+           FROM device_requests_history r
+           JOIN samsat s ON s.id = r.samsat_id
+           WHERE r.id = ? AND r.deleted_at IS NULL`
+        )
+        .bind(requestId)
+        .first<Record<string, unknown>>()
+
+      if (!row) return json({ error: 'permintaan tidak ditemukan' }, { status: 404 })
+      return json({ item: parseRequestRow(row) }, { status: 200 })
+    }
+
+    return json({ error: 'history belum dikonfigurasi' }, { status: 400 })
+  }
+
   if (!samsat) return json({ error: 'samsat wajib diisi' }, { status: 400 })
+
+  if (history) {
+    const rows = await env.DB
+      .prepare(
+        `SELECT r.*, s.name AS samsat
+         FROM device_requests_history r
+         JOIN samsat s ON s.id = r.samsat_id
+         WHERE r.samsat_id = ? AND r.deleted_at IS NULL
+         ORDER BY r.created_at DESC
+         LIMIT 200`
+      )
+      .bind(samsat)
+      .all<Record<string, unknown>>()
+
+    return json({ items: rows.results.map(parseRequestRow) }, { status: 200 })
+  }
 
   const row = await env.DB
     .prepare(
@@ -201,7 +270,10 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
   const data = body && typeof body === 'object' ? (body as Record<string, unknown>) : {}
   const action = String(data.action || 'save')
 
-  if (action !== 'save') return json({ error: 'action tidak dikenal' }, { status: 400 })
+  const history = await hasHistoryTable(env.DB)
+  if (!history) return json({ error: 'history belum dikonfigurasi' }, { status: 400 })
+
+  if (!['save', 'create', 'update', 'delete'].includes(action)) return json({ error: 'action tidak dikenal' }, { status: 400 })
 
   const payload = data.payload && typeof data.payload === 'object' ? (data.payload as Record<string, unknown>) : null
   if (!payload) return json({ error: 'payload wajib diisi' }, { status: 400 })
@@ -209,6 +281,9 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
   const samsat = String(payload.samsat || '').trim()
   if (!samsat) return json({ error: 'payload.samsat wajib diisi' }, { status: 400 })
   const samsatId = await ensureSamsat(env.DB, samsat)
+
+  const requestId = String(payload.requestId || payload.id || '').trim()
+  if (action !== 'create' && !requestId) return json({ error: 'payload.requestId wajib diisi' }, { status: 400 })
 
   const requestType = String(payload.requestType || 'PC KESAMSATAN').trim()
   const requestedCountPC = Math.max(0, Number(payload.requestedCountPC || 0))
@@ -244,37 +319,96 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
   const baDataUrl = ba?.dataUrl ? String(ba.dataUrl) : null
 
   const now = nowIso()
-  const existing = await env.DB.prepare('SELECT samsat_id, created_at FROM device_requests WHERE samsat_id = ?').bind(samsatId).first<Record<string, unknown>>()
-  const createdAt = existing?.created_at ? String(existing.created_at) : now
+  if (action === 'delete') {
+    await env.DB.prepare('UPDATE device_requests_history SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL').bind(now, now, requestId).run()
+    return json({ ok: true }, { status: 200 })
+  }
 
   const withFiles = await hasFileColumns(env.DB)
   const withCounts = await hasCountColumns(env.DB)
+
+  if (action === 'create') {
+    const id = newId()
+    const createdAt = now
+    const addedDeviceIdsJson = JSON.stringify([])
+    await env.DB
+      .prepare(
+        `INSERT INTO device_requests_history
+         (id, samsat_id, request_type, requested_count, ${withCounts ? 'requested_count_pc, requested_count_printer,' : ''} stock_status, kabid_status, kabid_approved_count, sekban_status, sekban_approved_count, added_device_ids_json, finalized_at, letter_file_name, letter_mime_type, letter_uploaded_at, ${withFiles ? 'letter_data_url,' : ''} ba_file_name, ba_mime_type, ba_uploaded_at, ${withFiles ? 'ba_data_url,' : ''} created_at, updated_at, deleted_at)
+         VALUES (?, ?, ?, ?, ${withCounts ? '?, ?,' : ''} ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${withFiles ? '?,' : ''} ?, ?, ?, ${withFiles ? '?,' : ''} ?, ?, NULL)`
+      )
+      .bind(
+        id,
+        samsatId,
+        requestType as string,
+        requestedCount,
+        ...(withCounts ? [requestedCountPC, requestedCountPrinter] : []),
+        stockStatus,
+        kabidStatus,
+        Number.isFinite(kabidApprovedCount as number) ? kabidApprovedCount : null,
+        sekbanStatus,
+        Number.isFinite(sekbanApprovedCount as number) ? sekbanApprovedCount : null,
+        addedDeviceIdsJson,
+        finalizedAt,
+        letterFileName,
+        letterMimeType,
+        letterUploadedAt,
+        ...(withFiles ? [letterDataUrl] : []),
+        baFileName,
+        baMimeType,
+        baUploadedAt,
+        ...(withFiles ? [baDataUrl] : []),
+        createdAt,
+        now
+      )
+      .run()
+
+    const row = await env.DB
+      .prepare(
+        `SELECT r.*, s.name AS samsat
+         FROM device_requests_history r
+         JOIN samsat s ON s.id = r.samsat_id
+         WHERE r.id = ?`
+      )
+      .bind(id)
+      .first<Record<string, unknown>>()
+
+    return json({ ok: true, id, item: row ? parseRequestRow(row) : null }, { status: 200 })
+  }
+
+  const existing = await env.DB
+    .prepare('SELECT id, created_at FROM device_requests_history WHERE id = ? AND deleted_at IS NULL')
+    .bind(requestId)
+    .first<Record<string, unknown>>()
+  if (!existing) return json({ error: 'permintaan tidak ditemukan' }, { status: 404 })
+  const createdAt = existing?.created_at ? String(existing.created_at) : now
+
   if (withFiles) {
     await env.DB
       .prepare(
-        `INSERT INTO device_requests
-         (samsat_id, request_type, requested_count, ${withCounts ? 'requested_count_pc, requested_count_printer,' : ''} stock_status, kabid_status, kabid_approved_count, sekban_status, sekban_approved_count, added_device_ids_json, finalized_at, letter_file_name, letter_mime_type, letter_uploaded_at, letter_data_url, ba_file_name, ba_mime_type, ba_uploaded_at, ba_data_url, created_at, updated_at)
-         VALUES (?, ?, ?, ${withCounts ? '?, ?,' : ''} ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(samsat_id) DO UPDATE SET
-           request_type=excluded.request_type,
-           requested_count=excluded.requested_count,
-           ${withCounts ? 'requested_count_pc=excluded.requested_count_pc, requested_count_printer=excluded.requested_count_printer,' : ''}
-           stock_status=excluded.stock_status,
-           kabid_status=excluded.kabid_status,
-           kabid_approved_count=excluded.kabid_approved_count,
-           sekban_status=excluded.sekban_status,
-           sekban_approved_count=excluded.sekban_approved_count,
-           added_device_ids_json=excluded.added_device_ids_json,
-           finalized_at=excluded.finalized_at,
-           letter_file_name=excluded.letter_file_name,
-           letter_mime_type=excluded.letter_mime_type,
-           letter_uploaded_at=excluded.letter_uploaded_at,
-           letter_data_url=excluded.letter_data_url,
-           ba_file_name=excluded.ba_file_name,
-           ba_mime_type=excluded.ba_mime_type,
-           ba_uploaded_at=excluded.ba_uploaded_at,
-           ba_data_url=excluded.ba_data_url,
-           updated_at=excluded.updated_at`
+        `UPDATE device_requests_history
+         SET samsat_id=?,
+             request_type=?,
+             requested_count=?,
+             ${withCounts ? 'requested_count_pc=?, requested_count_printer=?,' : ''}
+             stock_status=?,
+             kabid_status=?,
+             kabid_approved_count=?,
+             sekban_status=?,
+             sekban_approved_count=?,
+             added_device_ids_json=?,
+             finalized_at=?,
+             letter_file_name=?,
+             letter_mime_type=?,
+             letter_uploaded_at=?,
+             letter_data_url=?,
+             ba_file_name=?,
+             ba_mime_type=?,
+             ba_uploaded_at=?,
+             ba_data_url=?,
+             created_at=?,
+             updated_at=?
+         WHERE id=? AND deleted_at IS NULL`
       )
       .bind(
         samsatId,
@@ -297,30 +431,31 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
         baUploadedAt,
         baDataUrl,
         createdAt,
-        now
+        now,
+        requestId
       )
       .run()
   } else {
     await env.DB
       .prepare(
-        `INSERT INTO device_requests
-         (samsat_id, request_type, requested_count, ${withCounts ? 'requested_count_pc, requested_count_printer,' : ''} stock_status, kabid_status, kabid_approved_count, sekban_status, sekban_approved_count, added_device_ids_json, finalized_at, letter_file_name, letter_mime_type, letter_uploaded_at, created_at, updated_at)
-         VALUES (?, ?, ?, ${withCounts ? '?, ?,' : ''} ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(samsat_id) DO UPDATE SET
-           request_type=excluded.request_type,
-           requested_count=excluded.requested_count,
-           ${withCounts ? 'requested_count_pc=excluded.requested_count_pc, requested_count_printer=excluded.requested_count_printer,' : ''}
-           stock_status=excluded.stock_status,
-           kabid_status=excluded.kabid_status,
-           kabid_approved_count=excluded.kabid_approved_count,
-           sekban_status=excluded.sekban_status,
-           sekban_approved_count=excluded.sekban_approved_count,
-           added_device_ids_json=excluded.added_device_ids_json,
-           finalized_at=excluded.finalized_at,
-           letter_file_name=excluded.letter_file_name,
-           letter_mime_type=excluded.letter_mime_type,
-           letter_uploaded_at=excluded.letter_uploaded_at,
-           updated_at=excluded.updated_at`
+        `UPDATE device_requests_history
+         SET samsat_id=?,
+             request_type=?,
+             requested_count=?,
+             ${withCounts ? 'requested_count_pc=?, requested_count_printer=?,' : ''}
+             stock_status=?,
+             kabid_status=?,
+             kabid_approved_count=?,
+             sekban_status=?,
+             sekban_approved_count=?,
+             added_device_ids_json=?,
+             finalized_at=?,
+             letter_file_name=?,
+             letter_mime_type=?,
+             letter_uploaded_at=?,
+             created_at=?,
+             updated_at=?
+         WHERE id=? AND deleted_at IS NULL`
       )
       .bind(
         samsatId,
@@ -338,7 +473,8 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
         letterMimeType,
         letterUploadedAt,
         createdAt,
-        now
+        now,
+        requestId
       )
       .run()
   }
