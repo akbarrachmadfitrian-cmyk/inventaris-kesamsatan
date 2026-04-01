@@ -39,6 +39,8 @@ interface Env {
   DB?: D1Database
 }
 
+let devicesHasBudgetColumnsCache: boolean | null = null
+
 const json = (data: unknown, init?: ResponseInit) =>
   new Response(JSON.stringify(data), {
     ...init,
@@ -222,6 +224,20 @@ const ensureSamsat = async (db: D1Database, samsatName: string) => {
   return id
 }
 
+const hasBudgetColumns = async (db: D1Database) => {
+  if (devicesHasBudgetColumnsCache !== null) return devicesHasBudgetColumnsCache
+  try {
+    const res = await db.prepare("PRAGMA table_info('devices')").all<Record<string, unknown>>()
+    const names = new Set(res.results.map(r => String(r.name || '').toLowerCase()))
+    devicesHasBudgetColumnsCache =
+      names.has('budget_year') && names.has('budget_source') && names.has('service_history')
+    return devicesHasBudgetColumnsCache
+  } catch {
+    devicesHasBudgetColumnsCache = false
+    return false
+  }
+}
+
 const mapDeviceRow = (row: Record<string, unknown>): DeviceRow => {
   return {
     id: String(row.id || ''),
@@ -266,10 +282,12 @@ export async function onRequestGet({ request, env }: { request: Request; env: En
   }
 
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''
+  const withBudget = await hasBudgetColumns(env.DB)
+  const budgetSelect = withBudget ? 'd.budget_year, d.budget_source, d.service_history,' : ''
   const sql = `
     SELECT
       d.id, d.name, d.category, d.service_unit, d.serial_number, d.phone_number, d.holder_name, d.condition,
-      d.budget_year, d.budget_source, d.service_history,
+      ${budgetSelect}
       d.photo_r2_key, d.created_at, d.updated_at, d.updated_by,
       s.name AS samsat
     FROM devices d
@@ -328,14 +346,26 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
 
     const samsatId = await ensureSamsat(env.DB, samsat)
     const now = nowIso()
-    await env.DB
-      .prepare(
-        `UPDATE devices
-         SET samsat_id=?, name=?, category=?, service_unit=?, serial_number=?, phone_number=?, holder_name=?, condition=?, budget_year=?, budget_source=?, service_history=?, updated_at=?, updated_by=?
-         WHERE id=? AND deleted_at IS NULL`
-      )
-      .bind(samsatId, name, category || 'Aset', serviceUnit, serialNumber || 'N/A', phoneNumber, subLocation || 'Staff', condition || 'Baik', budgetYear, budgetSource, serviceHistory, now, updatedBy, id)
-      .run()
+    const withBudget = await hasBudgetColumns(env.DB)
+    if (withBudget) {
+      await env.DB
+        .prepare(
+          `UPDATE devices
+           SET samsat_id=?, name=?, category=?, service_unit=?, serial_number=?, phone_number=?, holder_name=?, condition=?, budget_year=?, budget_source=?, service_history=?, updated_at=?, updated_by=?
+           WHERE id=? AND deleted_at IS NULL`
+        )
+        .bind(samsatId, name, category || 'Aset', serviceUnit, serialNumber || 'N/A', phoneNumber, subLocation || 'Staff', condition || 'Baik', budgetYear, budgetSource, serviceHistory, now, updatedBy, id)
+        .run()
+    } else {
+      await env.DB
+        .prepare(
+          `UPDATE devices
+           SET samsat_id=?, name=?, category=?, service_unit=?, serial_number=?, phone_number=?, holder_name=?, condition=?, updated_at=?, updated_by=?
+           WHERE id=? AND deleted_at IS NULL`
+        )
+        .bind(samsatId, name, category || 'Aset', serviceUnit, serialNumber || 'N/A', phoneNumber, subLocation || 'Staff', condition || 'Baik', now, updatedBy, id)
+        .run()
+    }
 
     return json({ ok: true }, { status: 200 })
   }
@@ -387,32 +417,52 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
 
     // Batch upsert devices agar tidak timeout
     const chunkSize = 50
+    const withBudget = await hasBudgetColumns(env.DB)
     for (let i = 0; i < allDevices.length; i += chunkSize) {
       const chunk = allDevices.slice(i, i + chunkSize)
       const stmts: D1PreparedStatement[] = []
       for (const d of chunk) {
         const samsatId = d.samsat
-        const stmt = env.DB
-          .prepare(
-            `INSERT INTO devices
-             (id, samsat_id, name, category, service_unit, serial_number, phone_number, holder_name, condition, budget_year, budget_source, service_history, photo_r2_key, created_at, updated_at, updated_by, deleted_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
-             ON CONFLICT(id) DO UPDATE SET
-               samsat_id=excluded.samsat_id,
-               name=excluded.name,
-               category=excluded.category,
-               service_unit=excluded.service_unit,
-               serial_number=excluded.serial_number,
-               phone_number=excluded.phone_number,
-               holder_name=excluded.holder_name,
-               condition=excluded.condition,
-               budget_year=excluded.budget_year,
-               budget_source=excluded.budget_source,
-               service_history=excluded.service_history,
-               updated_at=excluded.updated_at,
-               deleted_at=NULL`
-          )
-          .bind(d.id, samsatId, d.name, d.category, d.serviceUnit, d.serialNumber, d.phoneNumber, d.subLocation, d.condition, d.budgetYear, d.budgetSource, d.serviceHistory, now, now)
+        const stmt = withBudget
+          ? env.DB
+              .prepare(
+                `INSERT INTO devices
+                 (id, samsat_id, name, category, service_unit, serial_number, phone_number, holder_name, condition, budget_year, budget_source, service_history, photo_r2_key, created_at, updated_at, updated_by, deleted_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
+                 ON CONFLICT(id) DO UPDATE SET
+                   samsat_id=excluded.samsat_id,
+                   name=excluded.name,
+                   category=excluded.category,
+                   service_unit=excluded.service_unit,
+                   serial_number=excluded.serial_number,
+                   phone_number=excluded.phone_number,
+                   holder_name=excluded.holder_name,
+                   condition=excluded.condition,
+                   budget_year=excluded.budget_year,
+                   budget_source=excluded.budget_source,
+                   service_history=excluded.service_history,
+                   updated_at=excluded.updated_at,
+                   deleted_at=NULL`
+              )
+              .bind(d.id, samsatId, d.name, d.category, d.serviceUnit, d.serialNumber, d.phoneNumber, d.subLocation, d.condition, d.budgetYear, d.budgetSource, d.serviceHistory, now, now)
+          : env.DB
+              .prepare(
+                `INSERT INTO devices
+                 (id, samsat_id, name, category, service_unit, serial_number, phone_number, holder_name, condition, photo_r2_key, created_at, updated_at, updated_by, deleted_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
+                 ON CONFLICT(id) DO UPDATE SET
+                   samsat_id=excluded.samsat_id,
+                   name=excluded.name,
+                   category=excluded.category,
+                   service_unit=excluded.service_unit,
+                   serial_number=excluded.serial_number,
+                   phone_number=excluded.phone_number,
+                   holder_name=excluded.holder_name,
+                   condition=excluded.condition,
+                   updated_at=excluded.updated_at,
+                   deleted_at=NULL`
+              )
+              .bind(d.id, samsatId, d.name, d.category, d.serviceUnit, d.serialNumber, d.phoneNumber, d.subLocation, d.condition, now, now)
         stmts.push(stmt)
       }
       if (stmts.length) {
@@ -445,14 +495,29 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
   const samsatId = await ensureSamsat(env.DB, samsat)
   const now = nowIso()
 
-  await env.DB
-    .prepare(
-      `INSERT INTO devices
-       (id, samsat_id, name, category, service_unit, serial_number, phone_number, holder_name, condition, budget_year, budget_source, service_history, photo_r2_key, created_at, updated_at, updated_by, deleted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL)`
-    )
-    .bind(id, samsatId, name, category || 'Aset', serviceUnit, serialNumber || 'N/A', phoneNumber, subLocation || 'Staff', condition || 'Baik', budgetYear, budgetSource, serviceHistory, now, now)
-    .run()
+  const existing = await env.DB.prepare('SELECT id FROM devices WHERE id = ? AND deleted_at IS NULL').bind(id).first()
+  if (existing) return json({ error: 'Perangkat dengan SN/ID ini sudah ada di database.' }, { status: 409 })
+
+  const withBudget = await hasBudgetColumns(env.DB)
+  if (withBudget) {
+    await env.DB
+      .prepare(
+        `INSERT INTO devices
+         (id, samsat_id, name, category, service_unit, serial_number, phone_number, holder_name, condition, budget_year, budget_source, service_history, photo_r2_key, created_at, updated_at, updated_by, deleted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL)`
+      )
+      .bind(id, samsatId, name, category || 'Aset', serviceUnit, serialNumber || 'N/A', phoneNumber, subLocation || 'Staff', condition || 'Baik', budgetYear, budgetSource, serviceHistory, now, now)
+      .run()
+  } else {
+    await env.DB
+      .prepare(
+        `INSERT INTO devices
+         (id, samsat_id, name, category, service_unit, serial_number, phone_number, holder_name, condition, photo_r2_key, created_at, updated_at, updated_by, deleted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL)`
+      )
+      .bind(id, samsatId, name, category || 'Aset', serviceUnit, serialNumber || 'N/A', phoneNumber, subLocation || 'Staff', condition || 'Baik', now, now)
+      .run()
+  }
 
   return json({ ok: true, id }, { status: 200 })
 }

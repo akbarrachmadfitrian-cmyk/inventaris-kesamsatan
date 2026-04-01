@@ -600,6 +600,9 @@ function App() {
   const [dashboardDevicesModalFilter, setDashboardDevicesModalFilter] = useState<'all' | 'Baik' | 'Kurang Baik' | 'Rusak'>('all');
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
   const [requestDraft, setRequestDraft] = useState<DeviceRequest | null>(null);
+  const [isRequestStatusOpen, setIsRequestStatusOpen] = useState(false);
+  const [requestStatusDraft, setRequestStatusDraft] = useState<DeviceRequest | null>(null);
+  const [requestStatusLoading, setRequestStatusLoading] = useState(false);
   const [newDeviceDraft, setNewDeviceDraft] = useState<Partial<Device>>({
     condition: 'Baik'
   });
@@ -1325,29 +1328,78 @@ function App() {
     });
   };
 
-  const openRequestModal = () => {
+  const fetchRequestFromApi = async (samsat: string) => {
+    const res = await axios.get('/api/device-requests', { params: { samsat }, timeout: 8000 });
+    return (res.data?.item || null) as DeviceRequest | null;
+  };
+
+  const saveRequestToApi = async (payload: DeviceRequest) => {
+    await axios.post('/api/device-requests', { action: 'save', payload }, { timeout: 8000 });
+  };
+
+  const openRequestModal = async () => {
     if (strictSheetSync) return;
     if (!isAdmin) return;
     if (!activeSamsat) return;
-    const requests = loadDeviceRequests();
-    const reqRaw = requests[activeSamsat] || createDefaultRequest(activeSamsat);
-    const req: DeviceRequest = {
-      ...createDefaultRequest(activeSamsat),
-      ...reqRaw,
-      requestType: (reqRaw as DeviceRequest).requestType || 'PC KESAMSATAN'
-    };
+    let req: DeviceRequest | null = null;
+    if (dbAvailable) {
+      try {
+        req = await fetchRequestFromApi(activeSamsat);
+      } catch {
+        req = null;
+      }
+    }
+    if (!req) {
+      const requests = loadDeviceRequests();
+      const reqRaw = requests[activeSamsat] || createDefaultRequest(activeSamsat);
+      req = {
+        ...createDefaultRequest(activeSamsat),
+        ...reqRaw,
+        requestType: (reqRaw as DeviceRequest).requestType || 'PC KESAMSATAN'
+      };
+    }
     setRequestDraft(req);
     setNewDeviceDraft({ condition: 'Baik', samsat: activeSamsat });
     setIsRequestModalOpen(true);
   };
 
-  const persistRequestDraft = (next: DeviceRequest) => {
+  const persistRequestDraft = async (next: DeviceRequest) => {
     if (strictSheetSync) return;
     if (!isAdmin) return;
+    if (dbAvailable) {
+      try {
+        await saveRequestToApi(next);
+      } catch {
+        window.alert('Gagal menyimpan data permintaan ke database.');
+      }
+    }
     const requests = loadDeviceRequests();
     requests[next.samsat] = next;
     saveDeviceRequests(requests);
     setRequestDraft(next);
+  };
+
+  const openRequestStatusModal = async () => {
+    if (!activeSamsat) return;
+    setRequestStatusLoading(true);
+    try {
+      let req: DeviceRequest | null = null;
+      if (dbAvailable) {
+        try {
+          req = await fetchRequestFromApi(activeSamsat);
+        } catch {
+          req = null;
+        }
+      }
+      if (!req) {
+        const reqRaw = loadDeviceRequests()[activeSamsat] || createDefaultRequest(activeSamsat);
+        req = { ...createDefaultRequest(activeSamsat), ...reqRaw };
+      }
+      setRequestStatusDraft(req);
+      setIsRequestStatusOpen(true);
+    } finally {
+      setRequestStatusLoading(false);
+    }
   };
 
   const deleteDevice = async (device: Device) => {
@@ -1402,12 +1454,8 @@ function App() {
 
   const getApprovedCount = (req: DeviceRequest) => {
     if (req.stockStatus !== 'ready') return 0;
-    if (req.kabid.status !== 'approved') return 0;
-    if (req.sekban.status !== 'approved') return 0;
-    const kabidCount = Math.max(0, Number(req.kabid.approvedCount || 0));
-    const sekbanCount = Math.max(0, Number(req.sekban.approvedCount || 0));
     const requested = Math.max(0, Number(req.requestedCount || 0));
-    return Math.min(kabidCount, sekbanCount, requested);
+    return requested;
   };
 
   const addRequestedDevice = async () => {
@@ -1469,8 +1517,20 @@ function App() {
           }
         }, { timeout: 8000 });
         setDevices(prev => [device, ...prev]);
-      } catch {
-        window.alert('Gagal menambah perangkat ke database.');
+      } catch (e) {
+        let msg = 'Gagal menambah perangkat ke database.'
+        const err = e as unknown
+        if (axios.isAxiosError(err)) {
+          const data = err.response?.data as unknown
+          if (data && typeof data === 'object' && 'error' in data) {
+            msg = String((data as { error?: unknown }).error ?? err.message)
+          } else {
+            msg = err.message
+          }
+        } else if (err instanceof Error) {
+          msg = err.message
+        }
+        window.alert(msg);
         return;
       }
     } else {
@@ -2156,6 +2216,14 @@ function App() {
                 <Monitor className="w-5 h-5" />
                 <span>Daftar Perangkat</span>
               </button>
+              <button
+                onClick={isAdmin ? openRequestModal : openRequestStatusModal}
+                disabled={requestStatusLoading}
+                className="w-full flex items-center gap-3 p-3 rounded-xl font-bold text-sm transition-all text-slate-500 hover:bg-slate-50 disabled:opacity-50"
+              >
+                <Send className="w-5 h-5" />
+                <span>Permintaan Perangkat</span>
+              </button>
               {isAdmin && (
                 <button 
                   onClick={() => setViewMode('scan-qr')}
@@ -2793,12 +2861,14 @@ function App() {
                               {requestDraft.letter && (
                                 <div className="mt-3 flex items-center justify-between gap-3">
                                   <p className="text-xs font-bold text-slate-600 truncate">{requestDraft.letter.fileName}</p>
-                                  <button
-                                    onClick={() => window.open(requestDraft.letter?.dataUrl || '', '_blank')}
-                                    className="text-xs font-black text-blue-600 hover:text-blue-700"
-                                  >
-                                    Lihat
-                                  </button>
+                                  {requestDraft.letter?.dataUrl ? (
+                                    <button
+                                      onClick={() => window.open(requestDraft.letter?.dataUrl || '', '_blank')}
+                                      className="text-xs font-black text-blue-600 hover:text-blue-700"
+                                    >
+                                      Lihat
+                                    </button>
+                                  ) : null}
                                 </div>
                               )}
                             </div>
@@ -2959,9 +3029,9 @@ function App() {
                             </div>
                           )}
 
-                          {suratOk && requestDraft.stockStatus === 'ready' && (requestDraft.kabid.status !== 'approved' || requestDraft.sekban.status !== 'approved') && (
+                          {suratOk && requestDraft.stockStatus === 'ready' && (
                             <div className="mt-5 bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-sm font-bold text-slate-600">
-                              Disposisi Kabid IPSIPD dan Sekretaris Badan harus <span className="text-emerald-700">Setuju</span>.
+                              Disposisi tetap dapat diproses, namun input perangkat hanya mengikuti status stok.
                             </div>
                           )}
 
@@ -3483,6 +3553,117 @@ function App() {
                     KIRIM
                   </button>
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isRequestStatusOpen && requestStatusDraft && (
+          <div className="fixed inset-0 z-[55] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[3rem] w-full max-w-3xl max-h-[calc(100vh-2rem)] overflow-hidden shadow-2xl relative"
+            >
+              <button onClick={() => setIsRequestStatusOpen(false)} className="absolute top-8 right-8 p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl z-20">
+                <XCircle className="w-6 h-6 text-slate-400" />
+              </button>
+              <div className="p-6 md:p-10 overflow-y-auto max-h-[calc(100vh-2rem)]">
+                <div className="mb-6">
+                  <h3 className="text-xl font-black text-slate-900">Status Permintaan Perangkat</h3>
+                  <p className="text-xs text-slate-500 font-bold mt-1">{requestStatusDraft.samsat}</p>
+                </div>
+
+                {(() => {
+                  const suratOk = !!requestStatusDraft.letter && requestStatusDraft.requestedCount > 0;
+                  const stockOk = requestStatusDraft.stockStatus === 'ready';
+                  const stockNo = requestStatusDraft.stockStatus === 'empty';
+                  const inputTotal = Math.max(0, Number(requestStatusDraft.requestedCount || 0));
+                  const inputDone = requestStatusDraft.addedDeviceIds.length;
+                  const inputOk = stockOk && inputTotal > 0 && inputDone >= inputTotal;
+
+                  return (
+                    <div className="space-y-4">
+                      <div className="border border-slate-100 rounded-3xl p-5">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Surat & Jumlah</p>
+                            <p className="text-sm font-black text-slate-900 mt-1">{requestStatusDraft.requestType} • {requestStatusDraft.requestedCount} unit</p>
+                            <p className="text-xs font-bold text-slate-500 mt-1">{requestStatusDraft.letter ? requestStatusDraft.letter.fileName : 'Belum ada surat'}</p>
+                          </div>
+                          <div className={`px-3 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-2 ${getStatusBadge(suratOk ? 'ok' : 'pending').className}`}>
+                            {getStatusBadge(suratOk ? 'ok' : 'pending').icon}
+                            {getStatusBadge(suratOk ? 'ok' : 'pending').text}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="border border-slate-100 rounded-3xl p-5">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Koreksi Stok</p>
+                            <p className="text-sm font-black text-slate-900 mt-1">
+                              {requestStatusDraft.stockStatus === 'ready' ? 'Stok Ready' : requestStatusDraft.stockStatus === 'empty' ? 'Stok Empty' : 'Standby'}
+                            </p>
+                          </div>
+                          <div className={`px-3 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-2 ${getStatusBadge(stockOk ? 'ok' : stockNo ? 'no' : 'pending').className}`}>
+                            {getStatusBadge(stockOk ? 'ok' : stockNo ? 'no' : 'pending').icon}
+                            {getStatusBadge(stockOk ? 'ok' : stockNo ? 'no' : 'pending').text}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="border border-slate-100 rounded-3xl p-5">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Disposisi Kabid IPSIPD</p>
+                            <p className="text-sm font-black text-slate-900 mt-1">
+                              {requestStatusDraft.kabid.status === 'approved' ? 'Setuju' : requestStatusDraft.kabid.status === 'rejected' ? 'Tidak Setuju' : 'Dalam Proses'}
+                            </p>
+                          </div>
+                          <div className={`px-3 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-2 ${getStatusBadge(requestStatusDraft.kabid.status === 'approved' ? 'ok' : requestStatusDraft.kabid.status === 'rejected' ? 'no' : 'pending').className}`}>
+                            {getStatusBadge(requestStatusDraft.kabid.status === 'approved' ? 'ok' : requestStatusDraft.kabid.status === 'rejected' ? 'no' : 'pending').icon}
+                            {getStatusBadge(requestStatusDraft.kabid.status === 'approved' ? 'ok' : requestStatusDraft.kabid.status === 'rejected' ? 'no' : 'pending').text}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="border border-slate-100 rounded-3xl p-5">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Disposisi Sekretaris Badan</p>
+                            <p className="text-sm font-black text-slate-900 mt-1">
+                              {requestStatusDraft.sekban.status === 'approved' ? 'Setuju' : requestStatusDraft.sekban.status === 'rejected' ? 'Tidak Setuju' : 'Dalam Proses'}
+                            </p>
+                          </div>
+                          <div className={`px-3 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-2 ${getStatusBadge(requestStatusDraft.sekban.status === 'approved' ? 'ok' : requestStatusDraft.sekban.status === 'rejected' ? 'no' : 'pending').className}`}>
+                            {getStatusBadge(requestStatusDraft.sekban.status === 'approved' ? 'ok' : requestStatusDraft.sekban.status === 'rejected' ? 'no' : 'pending').icon}
+                            {getStatusBadge(requestStatusDraft.sekban.status === 'approved' ? 'ok' : requestStatusDraft.sekban.status === 'rejected' ? 'no' : 'pending').text}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="border border-slate-100 rounded-3xl p-5">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Input Perangkat</p>
+                            <p className="text-sm font-black text-slate-900 mt-1">{inputDone} / {inputTotal} perangkat</p>
+                          </div>
+                          <div className={`px-3 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-2 ${getStatusBadge(inputOk ? 'ok' : stockOk && inputTotal > 0 ? 'pending' : 'pending').className}`}>
+                            {getStatusBadge(inputOk ? 'ok' : stockOk && inputTotal > 0 ? 'pending' : 'pending').icon}
+                            {getStatusBadge(inputOk ? 'ok' : stockOk && inputTotal > 0 ? 'pending' : 'pending').text}
+                          </div>
+                        </div>
+                        {requestStatusDraft.finalizedAt ? (
+                          <p className="mt-3 text-xs font-bold text-emerald-700">Selesai: {new Date(requestStatusDraft.finalizedAt).toLocaleString()}</p>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             </motion.div>
           </div>
