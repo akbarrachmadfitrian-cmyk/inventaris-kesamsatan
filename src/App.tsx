@@ -616,12 +616,12 @@ function App() {
   const [requestHistoryItems, setRequestHistoryItems] = useState<DeviceRequest[]>([]);
   const [requestHistoryLoading, setRequestHistoryLoading] = useState(false);
   const [isAddDeviceModalOpen, setIsAddDeviceModalOpen] = useState(false);
-  const [isAddDevicePickerOpen, setIsAddDevicePickerOpen] = useState(false);
   const [isRequestStatusOpen, setIsRequestStatusOpen] = useState(false);
   const [requestStatusDraft, setRequestStatusDraft] = useState<DeviceRequest | null>(null);
   const [requestStatusLoading, setRequestStatusLoading] = useState(false);
   const [newDeviceDraft, setNewDeviceDraft] = useState<Partial<Device>>({
-    condition: 'Baik'
+    condition: 'Baik',
+    budgetSource: 'APBD'
   });
 
   const [isInboxOpen, setIsInboxOpen] = useState(false);
@@ -1405,21 +1405,11 @@ function App() {
     setIsRequestModalOpen(true);
   };
 
-  const openAddDeviceModal = async (requestId: string) => {
+  const openAddDeviceModal = async () => {
     if (strictSheetSync) return;
     if (!isAdmin) return;
     if (!activeSamsat) return;
-    let req: DeviceRequest | null = null;
-    if (dbAvailable) {
-      try {
-        req = await fetchRequestByIdFromApi(requestId);
-      } catch {
-        req = null;
-      }
-    }
-    if (!req) return;
-    setRequestDraft({ ...createDefaultRequest(req.samsat), ...req });
-    setNewDeviceDraft({ condition: 'Baik', samsat: req.samsat, budgetSource: 'APBD' });
+    setNewDeviceDraft({ condition: 'Baik', samsat: activeSamsat, budgetSource: 'APBD' });
     setIsAddDeviceModalOpen(true);
   };
 
@@ -1457,28 +1447,6 @@ function App() {
       setIsRequestStatusOpen(true);
     } finally {
       setRequestStatusLoading(false);
-    }
-  };
-
-  const openAddDevicePicker = async () => {
-    if (strictSheetSync) return;
-    if (!isAdmin) return;
-    if (!activeSamsat) return;
-    setRequestHistoryLoading(true);
-    try {
-      if (dbAvailable) {
-        const items = await fetchRequestHistoryFromApi(activeSamsat);
-        setRequestHistoryItems(items);
-        if (items.length === 1) {
-          await openAddDeviceModal(items[0].requestId);
-        } else {
-          setIsAddDevicePickerOpen(true);
-        }
-      } else {
-        window.alert('History permintaan membutuhkan database.');
-      }
-    } finally {
-      setRequestHistoryLoading(false);
     }
   };
 
@@ -1570,22 +1538,10 @@ function App() {
     saveDeviceRequests(requests);
   };
 
-  const getApprovedCount = (req: DeviceRequest) => {
-    if (req.stockStatus !== 'ready') return 0;
-    const totalRequested =
-      req.requestType === 'PC & PRINTER KESAMSATAN'
-        ? Math.max(0, Number(req.requestedCountPC || 0)) + Math.max(0, Number(req.requestedCountPrinter || 0))
-        : Math.max(0, Number(req.requestedCount || 0));
-    return totalRequested;
-  };
-
   const addRequestedDevice = async () => {
     if (strictSheetSync) return;
     if (!isAdmin) return;
-    if (!requestDraft || !activeSamsat) return;
-    const approvedCount = getApprovedCount(requestDraft);
-    const remaining = approvedCount - requestDraft.addedDeviceIds.length;
-    if (remaining <= 0) return;
+    if (!activeSamsat) return;
 
     const name = String(newDeviceDraft.name || '').trim();
     const serviceUnit = String(newDeviceDraft.serviceUnit || '').trim();
@@ -1665,11 +1621,6 @@ function App() {
       setDevices(prev => [device, ...prev]);
     }
 
-    const nextReq: DeviceRequest = { ...requestDraft, addedDeviceIds: [...requestDraft.addedDeviceIds, device.id] };
-    const nextRemaining = approvedCount - nextReq.addedDeviceIds.length;
-    const finalized = nextRemaining <= 0 ? new Date().toISOString() : null;
-    persistRequestDraft({ ...nextReq, finalizedAt: finalized || nextReq.finalizedAt });
-
     setNewDeviceDraft(prev => ({
       ...prev,
       name: '',
@@ -1713,39 +1664,6 @@ function App() {
     if (!isAdmin) return;
     if (!requestDraft) return;
     persistRequestDraft({ ...requestDraft, letter: null });
-  };
-
-  const handleBeritaAcaraUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (strictSheetSync) return;
-    if (!isAdmin) return;
-    if (!requestDraft) return;
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!validatePickedFile(file, { allowedMimeTypes: ['application/pdf'], maxBytes: MAX_UPLOAD_BYTES, label: 'Upload berita acara serah terima barang' })) {
-      return;
-    }
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const dataUrl = String(reader.result || '');
-      const next: DeviceRequest = {
-        ...requestDraft,
-        beritaAcara: {
-          fileName: file.name,
-          mimeType: file.type || 'application/pdf',
-          dataUrl,
-          uploadedAt: new Date().toISOString()
-        }
-      };
-      persistRequestDraft(next);
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleRemoveBeritaAcara = () => {
-    if (strictSheetSync) return;
-    if (!isAdmin) return;
-    if (!requestDraft) return;
-    persistRequestDraft({ ...requestDraft, beritaAcara: null });
   };
 
   const fetchData = useCallback(async () => {
@@ -2415,7 +2333,7 @@ function App() {
               )}
               {isAdmin && !strictSheetSync && (
                 <button
-                  onClick={openAddDevicePicker}
+                  onClick={openAddDeviceModal}
                   className="w-full flex items-center gap-3 p-3 rounded-xl font-bold text-sm transition-all text-slate-500 hover:bg-slate-50"
                 >
                   <Plus className="w-5 h-5" />
@@ -2663,7 +2581,7 @@ function App() {
                 {activeSamsat && (
                   isAdmin && !strictSheetSync ? (
                     <button
-                      onClick={openAddDevicePicker}
+                      onClick={openAddDeviceModal}
                       className="px-5 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black transition-all shadow-lg shadow-blue-200 flex items-center gap-2"
                     >
                       <Plus className="w-5 h-5" />
@@ -3012,12 +2930,6 @@ function App() {
                               {isAdmin ? (
                                 <>
                                   <button
-                                    onClick={() => openAddDeviceModal(r.requestId)}
-                                    className="px-3 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-black transition-colors"
-                                  >
-                                    Input
-                                  </button>
-                                  <button
                                     onClick={() => openRequestEditor(r.requestId)}
                                     className="px-3 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-black transition-colors"
                                   >
@@ -3038,41 +2950,6 @@ function App() {
                       })}
                     </div>
                   )}
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {isAddDevicePickerOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-[3rem] w-full max-w-3xl max-h-[calc(100vh-2rem)] overflow-hidden shadow-2xl relative"
-            >
-              <button onClick={() => setIsAddDevicePickerOpen(false)} className="absolute top-8 right-8 p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl z-20">
-                <XCircle className="w-6 h-6 text-slate-400" />
-              </button>
-              <div className="p-6 md:p-10 overflow-y-auto max-h-[calc(100vh-2rem)]">
-                <div className="mb-6">
-                  <h3 className="text-xl font-black text-slate-900">Pilih Permintaan</h3>
-                  <p className="text-xs text-slate-500 font-bold mt-1">{activeSamsat}</p>
-                </div>
-                <div className="divide-y divide-slate-100 border border-slate-200 rounded-3xl overflow-hidden">
-                  {requestHistoryItems.map((r) => (
-                    <button
-                      key={r.requestId || r.createdAt}
-                      onClick={async () => { setIsAddDevicePickerOpen(false); await openAddDeviceModal(r.requestId); }}
-                      className="w-full text-left p-4 hover:bg-slate-50 transition-colors"
-                    >
-                      <p className="font-black text-slate-900">{r.requestType}</p>
-                      <p className="text-xs font-bold text-slate-500 mt-1">{new Date(r.createdAt).toLocaleString()}</p>
-                    </button>
-                  ))}
                 </div>
               </div>
             </motion.div>
@@ -3385,279 +3262,108 @@ function App() {
       </AnimatePresence>
 
       <AnimatePresence>
-        {isAddDeviceModalOpen && requestDraft && (
+        {isAddDeviceModalOpen && isAdmin && !strictSheetSync && activeSamsat && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-[3rem] w-full max-w-6xl max-h-[calc(100vh-2rem)] overflow-hidden shadow-2xl relative">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-[3rem] w-full max-w-4xl max-h-[calc(100vh-2rem)] overflow-hidden shadow-2xl relative">
               <button onClick={() => setIsAddDeviceModalOpen(false)} className="absolute top-8 right-8 p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl z-20">
                 <XCircle className="w-6 h-6 text-slate-400" />
               </button>
               <div className="p-6 md:p-10 overflow-y-auto max-h-[calc(100vh-2rem)]">
                 <div className="mb-6">
-                  <h3 className="text-xl font-black text-slate-900">Tambah Perangkat — {requestDraft.samsat}</h3>
-                  <p className="text-xs text-slate-500 font-bold mt-1">Input perangkat hanya mengikuti status stok dan jumlah permintaan.</p>
+                  <h3 className="text-xl font-black text-slate-900">Tambah Perangkat — {activeSamsat}</h3>
+                  <p className="text-xs text-slate-500 font-bold mt-1">Menu ini berdiri sendiri dan tidak terhubung ke proses permintaan perangkat.</p>
                 </div>
-
-                {(() => {
-                  const totalRequested =
-                    requestDraft.requestType === 'PC & PRINTER KESAMSATAN'
-                      ? Math.max(0, Number(requestDraft.requestedCountPC || 0)) + Math.max(0, Number(requestDraft.requestedCountPrinter || 0))
-                      : Math.max(0, Number(requestDraft.requestedCount || 0));
-                  const suratOk = !!requestDraft.letter && totalRequested > 0;
-                  const stockOk = requestDraft.stockStatus === 'ready';
-                  const stockNo = requestDraft.stockStatus === 'empty';
-                  const stockBadge = getStatusBadge(stockOk ? 'ok' : stockNo ? 'no' : 'pending');
-
-                  const approvedCount = getApprovedCount(requestDraft);
-                  const remaining = approvedCount - requestDraft.addedDeviceIds.length;
-                  const canInput = suratOk && approvedCount > 0;
-
-                  return (
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                      <div className="space-y-4">
-                        <div className="border border-slate-100 rounded-3xl p-5">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Surat & Jumlah</p>
-                              <p className="text-sm font-black text-slate-900 mt-1">{requestDraft.requestType} • {totalRequested} unit</p>
-                              {requestDraft.requestType === 'PC & PRINTER KESAMSATAN' ? (
-                                <p className="text-xs font-bold text-slate-500 mt-1">PC: {requestDraft.requestedCountPC} • PRINTER: {requestDraft.requestedCountPrinter}</p>
-                              ) : null}
-                              <p className="text-xs font-bold text-slate-500 mt-1">{requestDraft.letter ? requestDraft.letter.fileName : 'Belum ada surat'}</p>
-                            </div>
-                            <div className={`px-3 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-2 ${getStatusBadge(suratOk ? 'ok' : 'pending').className}`}>
-                              {getStatusBadge(suratOk ? 'ok' : 'pending').icon}
-                              {getStatusBadge(suratOk ? 'ok' : 'pending').text}
-                            </div>
-                          </div>
-                          {requestDraft.letter?.dataUrl ? (
-                            <button
-                              onClick={() => window.open(requestDraft.letter?.dataUrl || '', '_blank')}
-                              className="mt-4 w-full bg-slate-900 hover:bg-slate-950 text-white py-3 rounded-2xl font-black text-xs"
-                            >
-                              Download Surat (PDF)
-                            </button>
-                          ) : null}
-                        </div>
-
-                        <div className="border border-slate-100 rounded-3xl p-5">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Koreksi Stok</p>
-                              <p className="text-sm font-black text-slate-900 mt-1">
-                                {requestDraft.stockStatus === 'ready' ? 'Stok Ready' : requestDraft.stockStatus === 'empty' ? 'Stok Empty' : 'Standby'}
-                              </p>
-                            </div>
-                            <div className={`px-3 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-2 ${stockBadge.className}`}>
-                              {stockBadge.icon}
-                              {stockBadge.text}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="border border-slate-100 rounded-3xl p-5">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Upload Berita Acara Serah Terima Barang</p>
-                              <p className="text-xs font-black text-slate-900 mt-1">PDF (opsional)</p>
-                            </div>
-                            <div className={`px-3 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-2 ${getStatusBadge(requestDraft.beritaAcara ? 'ok' : 'pending').className}`}>
-                              {getStatusBadge(requestDraft.beritaAcara ? 'ok' : 'pending').icon}
-                              {getStatusBadge(requestDraft.beritaAcara ? 'ok' : 'pending').text}
-                            </div>
-                          </div>
-                          <div className="mt-4 bg-slate-50 border border-slate-100 rounded-2xl p-3">
-                            <label className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-2 flex items-center justify-center gap-2 font-bold text-xs text-slate-700 hover:bg-slate-50 cursor-pointer">
-                              <FileUp className="w-5 h-5 text-slate-500" />
-                              <span>{requestDraft.beritaAcara ? 'Ganti Berita Acara' : 'Pilih Berita Acara'}</span>
-                              <input type="file" className="hidden" accept="application/pdf,.pdf" onChange={handleBeritaAcaraUpload} />
-                            </label>
-                            {requestDraft.beritaAcara ? (
-                              <div className="mt-3 flex items-center justify-between gap-3">
-                                <p className="text-xs font-bold text-slate-600 truncate">{requestDraft.beritaAcara.fileName}</p>
-                                <div className="flex items-center gap-3">
-                                  {requestDraft.beritaAcara.dataUrl ? (
-                                    <button
-                                      onClick={() => window.open(requestDraft.beritaAcara?.dataUrl || '', '_blank')}
-                                      className="text-xs font-black text-blue-600 hover:text-blue-700"
-                                    >
-                                      Download
-                                    </button>
-                                  ) : null}
-                                  <button onClick={handleRemoveBeritaAcara} className="text-xs font-black text-rose-600 hover:text-rose-700">
-                                    Hapus
-                                  </button>
-                                </div>
-                              </div>
-                            ) : null}
-                            <p className="mt-2 text-[10px] font-bold text-slate-400">Format: PDF • Maks 2MB</p>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="space-y-4">
-                        <div className="border border-slate-100 rounded-3xl p-5">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Input Perangkat</p>
-                              <p className="text-xs font-black text-slate-900 mt-1">Masukkan perangkat sesuai jumlah diminta</p>
-                            </div>
-                            <div className={`px-3 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-2 ${getStatusBadge(canInput && remaining > 0 ? 'pending' : canInput && remaining <= 0 && approvedCount > 0 ? 'ok' : 'pending').className}`}>
-                              {getStatusBadge(canInput && remaining > 0 ? 'pending' : canInput && remaining <= 0 && approvedCount > 0 ? 'ok' : 'pending').icon}
-                              {getStatusBadge(canInput && remaining > 0 ? 'pending' : canInput && remaining <= 0 && approvedCount > 0 ? 'ok' : 'pending').text}
-                            </div>
-                          </div>
-
-                          {!suratOk ? (
-                            <div className="mt-5 bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-sm font-bold text-slate-600">
-                              Upload surat dan isi jumlah perangkat yang diminta.
-                            </div>
-                          ) : requestDraft.stockStatus !== 'ready' ? (
-                            <div className="mt-5 bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-sm font-bold text-slate-600">
-                              Koreksi stok harus <span className="text-emerald-700">Stok Ready</span> untuk lanjut input perangkat.
-                            </div>
-                          ) : null}
-
-                          {canInput ? (
-                            <>
-                              {approvedCount > 0 && remaining <= 0 ? (
-                                <div className="mt-5 bg-emerald-50 border border-emerald-100 rounded-2xl px-4 py-3 text-sm font-black text-emerald-700">
-                                  SELESAI INPUT, jumlah perangkat: {approvedCount}
-                                </div>
-                              ) : (
-                                <div className="mt-5 bg-amber-50 border border-amber-100 rounded-2xl px-4 py-3 text-sm font-black text-amber-800">
-                                  Sisa input perangkat: {Math.max(0, remaining)} / {approvedCount}
-                                </div>
-                              )}
-
-                              <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div>
-                                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Nama Perangkat</label>
-                                  <input
-                                    type="text"
-                                    value={String(newDeviceDraft.name || '')}
-                                    onChange={(e) => setNewDeviceDraft(prev => ({ ...prev, name: e.target.value }))}
-                                    className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-bold text-sm"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Jenis Layanan</label>
-                                  <input
-                                    type="text"
-                                    value={String(newDeviceDraft.serviceUnit || '')}
-                                    onChange={(e) => setNewDeviceDraft(prev => ({ ...prev, serviceUnit: e.target.value }))}
-                                    className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-bold text-sm"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Serial Number</label>
-                                  <input
-                                    type="text"
-                                    value={String(newDeviceDraft.serialNumber || '')}
-                                    onChange={(e) => setNewDeviceDraft(prev => ({ ...prev, serialNumber: e.target.value }))}
-                                    className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-bold text-sm"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">No HP User</label>
-                                  <input
-                                    type="text"
-                                    value={String(newDeviceDraft.phoneNumber || '')}
-                                    onChange={(e) => setNewDeviceDraft(prev => ({ ...prev, phoneNumber: e.target.value }))}
-                                    className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-bold text-sm"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Pemegang (Staff)</label>
-                                  <input
-                                    type="text"
-                                    value={String(newDeviceDraft.subLocation || '')}
-                                    onChange={(e) => setNewDeviceDraft(prev => ({ ...prev, subLocation: e.target.value }))}
-                                    className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-bold text-sm"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Tahun Anggaran</label>
-                                  <input
-                                    type="text"
-                                    value={String(newDeviceDraft.budgetYear || '')}
-                                    onChange={(e) => setNewDeviceDraft(prev => ({ ...prev, budgetYear: e.target.value }))}
-                                    className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-bold text-sm"
-                                    placeholder="Contoh: 2026"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Sumber Anggaran</label>
-                                  <select
-                                    value={String(newDeviceDraft.budgetSource || 'APBD')}
-                                    onChange={(e) => setNewDeviceDraft(prev => ({ ...prev, budgetSource: e.target.value }))}
-                                    className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-bold text-sm"
-                                  >
-                                    <option value="APBD">APBD</option>
-                                    <option value="Cost Sharing">Cost Sharing</option>
-                                    <option value="Hibah Bank Kalsel">Hibah Bank Kalsel</option>
-                                  </select>
-                                </div>
-                                <div>
-                                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Kondisi</label>
-                                  <select
-                                    value={String(newDeviceDraft.condition || 'Baik')}
-                                    onChange={(e) => setNewDeviceDraft(prev => ({ ...prev, condition: e.target.value }))}
-                                    className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-bold text-sm"
-                                  >
-                                    <option value="Baik">Baik</option>
-                                    <option value="Kurang Baik">Kurang Baik</option>
-                                    <option value="Rusak">Rusak</option>
-                                  </select>
-                                </div>
-                              </div>
-
-                              <button
-                                onClick={addRequestedDevice}
-                                disabled={remaining <= 0}
-                                className="mt-6 w-full bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl font-black flex items-center justify-center gap-2 disabled:bg-slate-200 disabled:text-slate-500"
-                              >
-                                <Plus className="w-5 h-5" />
-                                Tambah Perangkat (1)
-                              </button>
-                            </>
-                          ) : null}
-                        </div>
-
-                        <div className="border border-slate-100 rounded-3xl p-6">
-                          <div className="flex items-center justify-between mb-4">
-                            <div>
-                              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Perangkat Ditambahkan</p>
-                              <p className="text-sm font-black text-slate-900 mt-1">{requestDraft.addedDeviceIds.length} perangkat</p>
-                            </div>
-                            {approvedCount > 0 ? (
-                              <div className="text-[11px] font-black text-slate-600">
-                                Target: {approvedCount}
-                              </div>
-                            ) : null}
-                          </div>
-                          <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
-                            {devices.filter(d => requestDraft.addedDeviceIds.includes(d.id)).map(d => (
-                              <div key={d.id} className="flex items-center justify-between bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3">
-                                <div className="min-w-0">
-                                  <p className="text-sm font-black text-slate-900 truncate">{d.name}</p>
-                                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider truncate">{d.serviceUnit} • {d.subLocation}</p>
-                                </div>
-                                <button onClick={() => deleteDevice(d)} className="p-2 rounded-xl hover:bg-rose-50 text-rose-600" aria-label="Hapus perangkat">
-                                  <Trash2 className="w-5 h-5" />
-                                </button>
-                              </div>
-                            ))}
-                            {devices.filter(d => requestDraft.addedDeviceIds.includes(d.id)).length === 0 ? (
-                              <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-sm font-bold text-slate-600">
-                                Belum ada perangkat yang ditambahkan.
-                              </div>
-                            ) : null}
-                          </div>
-                        </div>
-                      </div>
+                <div className="border border-slate-100 rounded-3xl p-5">
+                  <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Nama Perangkat</label>
+                      <input
+                        type="text"
+                        value={String(newDeviceDraft.name || '')}
+                        onChange={(e) => setNewDeviceDraft(prev => ({ ...prev, name: e.target.value }))}
+                        className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-bold text-sm"
+                      />
                     </div>
-                  );
-                })()}
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Jenis Layanan</label>
+                      <input
+                        type="text"
+                        value={String(newDeviceDraft.serviceUnit || '')}
+                        onChange={(e) => setNewDeviceDraft(prev => ({ ...prev, serviceUnit: e.target.value }))}
+                        className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-bold text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Serial Number</label>
+                      <input
+                        type="text"
+                        value={String(newDeviceDraft.serialNumber || '')}
+                        onChange={(e) => setNewDeviceDraft(prev => ({ ...prev, serialNumber: e.target.value }))}
+                        className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-bold text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">No HP User</label>
+                      <input
+                        type="text"
+                        value={String(newDeviceDraft.phoneNumber || '')}
+                        onChange={(e) => setNewDeviceDraft(prev => ({ ...prev, phoneNumber: e.target.value }))}
+                        className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-bold text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Pemegang (Staff)</label>
+                      <input
+                        type="text"
+                        value={String(newDeviceDraft.subLocation || '')}
+                        onChange={(e) => setNewDeviceDraft(prev => ({ ...prev, subLocation: e.target.value }))}
+                        className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-bold text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Tahun Anggaran</label>
+                      <input
+                        type="text"
+                        value={String(newDeviceDraft.budgetYear || '')}
+                        onChange={(e) => setNewDeviceDraft(prev => ({ ...prev, budgetYear: e.target.value }))}
+                        className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-bold text-sm"
+                        placeholder="Contoh: 2026"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Sumber Anggaran</label>
+                      <select
+                        value={String(newDeviceDraft.budgetSource || 'APBD')}
+                        onChange={(e) => setNewDeviceDraft(prev => ({ ...prev, budgetSource: e.target.value }))}
+                        className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-bold text-sm"
+                      >
+                        <option value="APBD">APBD</option>
+                        <option value="Cost Sharing">Cost Sharing</option>
+                        <option value="Hibah Bank Kalsel">Hibah Bank Kalsel</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Kondisi</label>
+                      <select
+                        value={String(newDeviceDraft.condition || 'Baik')}
+                        onChange={(e) => setNewDeviceDraft(prev => ({ ...prev, condition: e.target.value }))}
+                        className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-bold text-sm"
+                      >
+                        <option value="Baik">Baik</option>
+                        <option value="Kurang Baik">Kurang Baik</option>
+                        <option value="Rusak">Rusak</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={addRequestedDevice}
+                    className="mt-6 w-full bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl font-black flex items-center justify-center gap-2"
+                  >
+                    <Plus className="w-5 h-5" />
+                    Tambah Perangkat
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>
