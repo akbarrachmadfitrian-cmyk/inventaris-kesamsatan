@@ -701,6 +701,15 @@ function App() {
   const isAdmin = session?.role === 'admin';
   const strictSheetSync = false;
 
+  useEffect(() => {
+    if (session?.role === 'admin') {
+      const key = String(localStorage.getItem('admin_api_key') || '').trim();
+      if (key) axios.defaults.headers.common['x-admin-key'] = key;
+    } else {
+      delete axios.defaults.headers.common['x-admin-key'];
+    }
+  }, [session?.role]);
+
   const handleLogin = (role: AuthRole) => {
     const creds = getAuthCredentials();
     const expectedPassword = role === 'admin' ? creds.adminPassword : creds.userPassword;
@@ -715,6 +724,18 @@ function App() {
     const nextSession: AuthSession = { role, username: expectedUsername, loggedInAt: new Date().toISOString() };
     setSession(nextSession);
     saveAuthSession(nextSession);
+    if (role === 'admin') {
+      const existingKey = String(localStorage.getItem('admin_api_key') || '').trim();
+      const key =
+        existingKey ||
+        String(window.prompt('Masukkan Admin API Key (untuk akses fitur admin server):') || '').trim();
+      if (key) {
+        localStorage.setItem('admin_api_key', key);
+        axios.defaults.headers.common['x-admin-key'] = key;
+      }
+    } else {
+      delete axios.defaults.headers.common['x-admin-key'];
+    }
     setAuthUsername('');
     setAuthPassword('');
     setAuthError(null);
@@ -732,6 +753,7 @@ function App() {
     if (!ok) return;
     setSession(null);
     clearAuthSession();
+    delete axios.defaults.headers.common['x-admin-key'];
     setAuthTab('admin');
     setAuthUsername('');
     setAuthPassword('');

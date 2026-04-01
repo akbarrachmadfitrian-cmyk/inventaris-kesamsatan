@@ -75,3 +75,17 @@ Ini dipakai untuk submit:
 ## Catatan Penting
 
 - Jangan buat satu aplikasi Access untuk `/api/*` karena akan menyulitkan pemisahan role. Gunakan 3 path prefix: `/api/public/*`, `/api/user/*`, `/api/admin/*`.
+
+## Alternatif Gratis Tanpa Cloudflare Access
+
+Jika Zero Trust/Access tetap meminta metode pembayaran dan Anda tidak bisa menambahkannya, aplikasi tetap bisa membatasi endpoint admin dengan API Key di server.
+
+### Cara pakai
+
+1. Di Cloudflare Pages → **Settings → Environment variables**, tambahkan:
+   - `ADMIN_API_KEY` = nilai rahasia (misalnya string random panjang)
+2. Saat login sebagai admin di aplikasi, akan muncul prompt untuk mengisi **Admin API Key**.
+3. Endpoint admin hanya bisa dipanggil jika request memiliki header:
+   - `x-admin-key: <ADMIN_API_KEY>`
+
+Catatan: alternatif ini hanya mengunci endpoint admin (`/api/admin/*`). Endpoint public/user tetap mengikuti rule akses yang Anda atur sendiri.
