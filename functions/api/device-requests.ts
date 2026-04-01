@@ -14,6 +14,7 @@ interface DeviceRequestState {
   requestType: RequestType
   requestedCount: number
   letter: DeviceRequestLetterMeta | null
+  beritaAcara: DeviceRequestLetterMeta | null
   stockStatus: StockStatus
   kabid: { status: ApprovalStatus; approvedCount: number | null }
   sekban: { status: ApprovalStatus; approvedCount: number | null }
@@ -40,6 +41,8 @@ interface Env {
   DB?: D1Database
 }
 
+let deviceRequestsHasFileColumnsCache: boolean | null = null
+
 const json = (data: unknown, init?: ResponseInit) =>
   new Response(JSON.stringify(data), {
     ...init,
@@ -56,6 +59,7 @@ const createDefaultRequest = (samsat: string): DeviceRequestState => ({
   requestType: 'PC KESAMSATAN',
   requestedCount: 0,
   letter: null,
+  beritaAcara: null,
   stockStatus: 'standby',
   kabid: { status: 'pending', approvedCount: null },
   sekban: { status: 'pending', approvedCount: null },
@@ -75,6 +79,20 @@ const ensureSamsat = async (db: D1Database, samsatName: string) => {
   return id
 }
 
+const hasFileColumns = async (db: D1Database) => {
+  if (deviceRequestsHasFileColumnsCache !== null) return deviceRequestsHasFileColumnsCache
+  try {
+    const res = await db.prepare("PRAGMA table_info('device_requests')").all<Record<string, unknown>>()
+    const names = new Set(res.results.map(r => String(r.name || '').toLowerCase()))
+    deviceRequestsHasFileColumnsCache =
+      names.has('letter_data_url') && names.has('ba_data_url') && names.has('ba_file_name') && names.has('ba_mime_type') && names.has('ba_uploaded_at')
+    return deviceRequestsHasFileColumnsCache
+  } catch {
+    deviceRequestsHasFileColumnsCache = false
+    return false
+  }
+}
+
 const parseRequestRow = (row: Record<string, unknown>): DeviceRequestState => {
   const samsat = String(row.samsat || row.samsat_id || '')
   const addedRaw = String(row.added_device_ids_json || '[]')
@@ -89,9 +107,18 @@ const parseRequestRow = (row: Record<string, unknown>): DeviceRequestState => {
   const letterFile = row.letter_file_name ? String(row.letter_file_name) : ''
   const letterMime = row.letter_mime_type ? String(row.letter_mime_type) : ''
   const letterUploadedAt = row.letter_uploaded_at ? String(row.letter_uploaded_at) : ''
+  const letterDataUrl = row.letter_data_url ? String(row.letter_data_url) : ''
 
   const letter = letterFile
-    ? { fileName: letterFile, mimeType: letterMime || 'application/octet-stream', uploadedAt: letterUploadedAt || nowIso(), dataUrl: '' }
+    ? { fileName: letterFile, mimeType: letterMime || 'application/octet-stream', uploadedAt: letterUploadedAt || nowIso(), dataUrl: letterDataUrl }
+    : null
+
+  const baFile = row.ba_file_name ? String(row.ba_file_name) : ''
+  const baMime = row.ba_mime_type ? String(row.ba_mime_type) : ''
+  const baUploadedAt = row.ba_uploaded_at ? String(row.ba_uploaded_at) : ''
+  const baDataUrl = row.ba_data_url ? String(row.ba_data_url) : ''
+  const beritaAcara = baFile
+    ? { fileName: baFile, mimeType: baMime || 'application/pdf', uploadedAt: baUploadedAt || nowIso(), dataUrl: baDataUrl }
     : null
 
   const requestType = (String(row.request_type || 'PC KESAMSATAN') as RequestType) || 'PC KESAMSATAN'
@@ -108,6 +135,7 @@ const parseRequestRow = (row: Record<string, unknown>): DeviceRequestState => {
     requestType,
     requestedCount,
     letter,
+    beritaAcara,
     stockStatus,
     kabid: { status: kabidStatus, approvedCount: Number.isFinite(kabidApproved) ? kabidApproved : null },
     sekban: { status: sekbanStatus, approvedCount: Number.isFinite(sekbanApproved) ? sekbanApproved : null },
@@ -179,49 +207,108 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
   const letterFileName = letter?.fileName ? String(letter.fileName) : null
   const letterMimeType = letter?.mimeType ? String(letter.mimeType) : null
   const letterUploadedAt = letter?.uploadedAt ? String(letter.uploadedAt) : null
+  const letterDataUrl = letter?.dataUrl ? String(letter.dataUrl) : null
+
+  const ba = payload.beritaAcara && typeof payload.beritaAcara === 'object' ? (payload.beritaAcara as Record<string, unknown>) : null
+  const baFileName = ba?.fileName ? String(ba.fileName) : null
+  const baMimeType = ba?.mimeType ? String(ba.mimeType) : null
+  const baUploadedAt = ba?.uploadedAt ? String(ba.uploadedAt) : null
+  const baDataUrl = ba?.dataUrl ? String(ba.dataUrl) : null
 
   const now = nowIso()
   const existing = await env.DB.prepare('SELECT samsat_id, created_at FROM device_requests WHERE samsat_id = ?').bind(samsatId).first<Record<string, unknown>>()
   const createdAt = existing?.created_at ? String(existing.created_at) : now
 
-  await env.DB
-    .prepare(
-      `INSERT INTO device_requests
-       (samsat_id, request_type, requested_count, stock_status, kabid_status, kabid_approved_count, sekban_status, sekban_approved_count, added_device_ids_json, finalized_at, letter_file_name, letter_mime_type, letter_uploaded_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(samsat_id) DO UPDATE SET
-         request_type=excluded.request_type,
-         requested_count=excluded.requested_count,
-         stock_status=excluded.stock_status,
-         kabid_status=excluded.kabid_status,
-         kabid_approved_count=excluded.kabid_approved_count,
-         sekban_status=excluded.sekban_status,
-         sekban_approved_count=excluded.sekban_approved_count,
-         added_device_ids_json=excluded.added_device_ids_json,
-         finalized_at=excluded.finalized_at,
-         letter_file_name=excluded.letter_file_name,
-         letter_mime_type=excluded.letter_mime_type,
-         letter_uploaded_at=excluded.letter_uploaded_at,
-         updated_at=excluded.updated_at`
-    )
-    .bind(
-      samsatId,
-      requestType,
-      requestedCount,
-      stockStatus,
-      kabidStatus,
-      Number.isFinite(kabidApprovedCount as number) ? kabidApprovedCount : null,
-      sekbanStatus,
-      Number.isFinite(sekbanApprovedCount as number) ? sekbanApprovedCount : null,
-      addedDeviceIdsJson,
-      finalizedAt,
-      letterFileName,
-      letterMimeType,
-      letterUploadedAt,
-      createdAt,
-      now
-    )
-    .run()
+  const withFiles = await hasFileColumns(env.DB)
+  if (withFiles) {
+    await env.DB
+      .prepare(
+        `INSERT INTO device_requests
+         (samsat_id, request_type, requested_count, stock_status, kabid_status, kabid_approved_count, sekban_status, sekban_approved_count, added_device_ids_json, finalized_at, letter_file_name, letter_mime_type, letter_uploaded_at, letter_data_url, ba_file_name, ba_mime_type, ba_uploaded_at, ba_data_url, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(samsat_id) DO UPDATE SET
+           request_type=excluded.request_type,
+           requested_count=excluded.requested_count,
+           stock_status=excluded.stock_status,
+           kabid_status=excluded.kabid_status,
+           kabid_approved_count=excluded.kabid_approved_count,
+           sekban_status=excluded.sekban_status,
+           sekban_approved_count=excluded.sekban_approved_count,
+           added_device_ids_json=excluded.added_device_ids_json,
+           finalized_at=excluded.finalized_at,
+           letter_file_name=excluded.letter_file_name,
+           letter_mime_type=excluded.letter_mime_type,
+           letter_uploaded_at=excluded.letter_uploaded_at,
+           letter_data_url=excluded.letter_data_url,
+           ba_file_name=excluded.ba_file_name,
+           ba_mime_type=excluded.ba_mime_type,
+           ba_uploaded_at=excluded.ba_uploaded_at,
+           ba_data_url=excluded.ba_data_url,
+           updated_at=excluded.updated_at`
+      )
+      .bind(
+        samsatId,
+        requestType,
+        requestedCount,
+        stockStatus,
+        kabidStatus,
+        Number.isFinite(kabidApprovedCount as number) ? kabidApprovedCount : null,
+        sekbanStatus,
+        Number.isFinite(sekbanApprovedCount as number) ? sekbanApprovedCount : null,
+        addedDeviceIdsJson,
+        finalizedAt,
+        letterFileName,
+        letterMimeType,
+        letterUploadedAt,
+        letterDataUrl,
+        baFileName,
+        baMimeType,
+        baUploadedAt,
+        baDataUrl,
+        createdAt,
+        now
+      )
+      .run()
+  } else {
+    await env.DB
+      .prepare(
+        `INSERT INTO device_requests
+         (samsat_id, request_type, requested_count, stock_status, kabid_status, kabid_approved_count, sekban_status, sekban_approved_count, added_device_ids_json, finalized_at, letter_file_name, letter_mime_type, letter_uploaded_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(samsat_id) DO UPDATE SET
+           request_type=excluded.request_type,
+           requested_count=excluded.requested_count,
+           stock_status=excluded.stock_status,
+           kabid_status=excluded.kabid_status,
+           kabid_approved_count=excluded.kabid_approved_count,
+           sekban_status=excluded.sekban_status,
+           sekban_approved_count=excluded.sekban_approved_count,
+           added_device_ids_json=excluded.added_device_ids_json,
+           finalized_at=excluded.finalized_at,
+           letter_file_name=excluded.letter_file_name,
+           letter_mime_type=excluded.letter_mime_type,
+           letter_uploaded_at=excluded.letter_uploaded_at,
+           updated_at=excluded.updated_at`
+      )
+      .bind(
+        samsatId,
+        requestType,
+        requestedCount,
+        stockStatus,
+        kabidStatus,
+        Number.isFinite(kabidApprovedCount as number) ? kabidApprovedCount : null,
+        sekbanStatus,
+        Number.isFinite(sekbanApprovedCount as number) ? sekbanApprovedCount : null,
+        addedDeviceIdsJson,
+        finalizedAt,
+        letterFileName,
+        letterMimeType,
+        letterUploadedAt,
+        createdAt,
+        now
+      )
+      .run()
+  }
 
   return json({ ok: true }, { status: 200 })
 }

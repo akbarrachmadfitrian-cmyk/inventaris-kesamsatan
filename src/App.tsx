@@ -6,7 +6,7 @@ import {
   Monitor, Printer, LayoutDashboard, ChevronRight,
   Building2, Layers, XCircle, AlertTriangle,
   Trash2, Plus, FileUp, Clock3,
-  ChevronDown, List, KeyRound, Inbox, Send, Pencil
+  ChevronDown, List, KeyRound, Inbox, Send, Pencil, Truck
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -60,6 +60,7 @@ interface DeviceRequest {
   requestType: RequestType;
   requestedCount: number;
   letter: DeviceRequestLetter | null;
+  beritaAcara: DeviceRequestLetter | null;
   stockStatus: StockStatus;
   kabid: { status: ApprovalStatus; approvedCount: number | null };
   sekban: { status: ApprovalStatus; approvedCount: number | null };
@@ -392,6 +393,7 @@ const createDefaultRequest = (samsat: string): DeviceRequest => ({
   requestType: 'PC KESAMSATAN',
   requestedCount: 0,
   letter: null,
+  beritaAcara: null,
   stockStatus: 'standby',
   kabid: { status: 'pending', approvedCount: null },
   sekban: { status: 'pending', approvedCount: null },
@@ -600,6 +602,7 @@ function App() {
   const [dashboardDevicesModalFilter, setDashboardDevicesModalFilter] = useState<'all' | 'Baik' | 'Kurang Baik' | 'Rusak'>('all');
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
   const [requestDraft, setRequestDraft] = useState<DeviceRequest | null>(null);
+  const [isAddDeviceModalOpen, setIsAddDeviceModalOpen] = useState(false);
   const [isRequestStatusOpen, setIsRequestStatusOpen] = useState(false);
   const [requestStatusDraft, setRequestStatusDraft] = useState<DeviceRequest | null>(null);
   const [requestStatusLoading, setRequestStatusLoading] = useState(false);
@@ -1363,6 +1366,28 @@ function App() {
     setIsRequestModalOpen(true);
   };
 
+  const openAddDeviceModal = async () => {
+    if (strictSheetSync) return;
+    if (!isAdmin) return;
+    if (!activeSamsat) return;
+    let req: DeviceRequest | null = null;
+    if (dbAvailable) {
+      try {
+        req = await fetchRequestFromApi(activeSamsat);
+      } catch {
+        req = null;
+      }
+    }
+    if (!req) {
+      const requests = loadDeviceRequests();
+      const reqRaw = requests[activeSamsat] || createDefaultRequest(activeSamsat);
+      req = { ...createDefaultRequest(activeSamsat), ...reqRaw };
+    }
+    setRequestDraft(req);
+    setNewDeviceDraft({ condition: 'Baik', samsat: activeSamsat });
+    setIsAddDeviceModalOpen(true);
+  };
+
   const persistRequestDraft = async (next: DeviceRequest) => {
     if (strictSheetSync) return;
     if (!isAdmin) return;
@@ -1563,6 +1588,9 @@ function App() {
     if (!requestDraft) return;
     const file = e.target.files?.[0];
     if (!file) return;
+    if (!validatePickedFile(file, { allowedMimeTypes: ['application/pdf'], maxBytes: MAX_UPLOAD_BYTES, label: 'Upload surat permintaan' })) {
+      return;
+    }
     const reader = new FileReader();
     reader.onloadend = () => {
       const dataUrl = String(reader.result || '');
@@ -1573,11 +1601,52 @@ function App() {
           mimeType: file.type || 'application/octet-stream',
           dataUrl,
           uploadedAt: new Date().toISOString()
+        },
+        requestedCount: requestDraft.requestedCount
+      };
+      persistRequestDraft(next);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveLetter = () => {
+    if (strictSheetSync) return;
+    if (!isAdmin) return;
+    if (!requestDraft) return;
+    persistRequestDraft({ ...requestDraft, letter: null });
+  };
+
+  const handleBeritaAcaraUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (strictSheetSync) return;
+    if (!isAdmin) return;
+    if (!requestDraft) return;
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!validatePickedFile(file, { allowedMimeTypes: ['application/pdf'], maxBytes: MAX_UPLOAD_BYTES, label: 'Upload berita acara serah terima barang' })) {
+      return;
+    }
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const dataUrl = String(reader.result || '');
+      const next: DeviceRequest = {
+        ...requestDraft,
+        beritaAcara: {
+          fileName: file.name,
+          mimeType: file.type || 'application/pdf',
+          dataUrl,
+          uploadedAt: new Date().toISOString()
         }
       };
       persistRequestDraft(next);
     };
     reader.readAsDataURL(file);
+  };
+
+  const handleRemoveBeritaAcara = () => {
+    if (strictSheetSync) return;
+    if (!isAdmin) return;
+    if (!requestDraft) return;
+    persistRequestDraft({ ...requestDraft, beritaAcara: null });
   };
 
   const fetchData = useCallback(async () => {
@@ -2216,14 +2285,24 @@ function App() {
                 <Monitor className="w-5 h-5" />
                 <span>Daftar Perangkat</span>
               </button>
-              <button
-                onClick={isAdmin ? openRequestModal : openRequestStatusModal}
-                disabled={requestStatusLoading}
-                className="w-full flex items-center gap-3 p-3 rounded-xl font-bold text-sm transition-all text-slate-500 hover:bg-slate-50 disabled:opacity-50"
-              >
-                <Send className="w-5 h-5" />
-                <span>Permintaan Perangkat</span>
-              </button>
+              {isAdmin ? (
+                <button
+                  onClick={openRequestModal}
+                  className="w-full flex items-center gap-3 p-3 rounded-xl font-bold text-sm transition-all text-slate-500 hover:bg-slate-50"
+                >
+                  <Send className="w-5 h-5" />
+                  <span>Permintaan Perangkat</span>
+                </button>
+              ) : (
+                <button
+                  onClick={openRequestStatusModal}
+                  disabled={requestStatusLoading}
+                  className="w-full flex items-center gap-3 p-3 rounded-xl font-bold text-sm transition-all text-slate-500 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  <Truck className="w-5 h-5" />
+                  <span>STATUS PERMINTAAN PERANGKAT</span>
+                </button>
+              )}
               {isAdmin && (
                 <button 
                   onClick={() => setViewMode('scan-qr')}
@@ -2237,7 +2316,7 @@ function App() {
               )}
               {isAdmin && !strictSheetSync && (
                 <button
-                  onClick={openRequestModal}
+                  onClick={openAddDeviceModal}
                   className="w-full flex items-center gap-3 p-3 rounded-xl font-bold text-sm transition-all text-slate-500 hover:bg-slate-50"
                 >
                   <Plus className="w-5 h-5" />
@@ -2818,8 +2897,8 @@ function App() {
               </button>
               <div className="p-6 md:p-10 overflow-y-auto max-h-[calc(100vh-2rem)]">
                 <div className="mb-6">
-                  <h3 className="text-xl font-black text-slate-900">Tambah Perangkat — {requestDraft.samsat}</h3>
-                  <p className="text-xs text-slate-500 font-bold mt-1">Kelola alur permintaan, koreksi stok, disposisi, dan input perangkat.</p>
+                  <h3 className="text-xl font-black text-slate-900">Permintaan Perangkat — {requestDraft.samsat}</h3>
+                  <p className="text-xs text-slate-500 font-bold mt-1">Kelola surat permintaan, stok, dan disposisi.</p>
                 </div>
 
                 {(() => {
@@ -2831,13 +2910,8 @@ function App() {
                   const kabidBadge = getStatusBadge(requestDraft.kabid.status === 'approved' ? 'ok' : requestDraft.kabid.status === 'rejected' ? 'no' : 'pending');
                   const sekbanBadge = getStatusBadge(requestDraft.sekban.status === 'approved' ? 'ok' : requestDraft.sekban.status === 'rejected' ? 'no' : 'pending');
 
-                  const approvedCount = getApprovedCount(requestDraft);
-                  const remaining = approvedCount - requestDraft.addedDeviceIds.length;
-                  const canInput = suratOk && approvedCount > 0;
-
                   return (
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                      <div className="space-y-4">
+                    <div className="space-y-4">
                         <div className="border border-slate-100 rounded-3xl p-5">
                           <div className="flex items-center justify-between">
                             <div>
@@ -2856,21 +2930,27 @@ function App() {
                               <label className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-2 flex items-center justify-center gap-2 font-bold text-xs text-slate-700 hover:bg-slate-50 cursor-pointer">
                                 <FileUp className="w-5 h-5 text-slate-500" />
                                 <span>{requestDraft.letter ? 'Ganti Surat' : 'Pilih Surat'}</span>
-                                <input type="file" className="hidden" accept="image/*,application/pdf" onChange={handleLetterUpload} />
+                                <input type="file" className="hidden" accept="application/pdf,.pdf" onChange={handleLetterUpload} />
                               </label>
                               {requestDraft.letter && (
                                 <div className="mt-3 flex items-center justify-between gap-3">
                                   <p className="text-xs font-bold text-slate-600 truncate">{requestDraft.letter.fileName}</p>
-                                  {requestDraft.letter?.dataUrl ? (
-                                    <button
-                                      onClick={() => window.open(requestDraft.letter?.dataUrl || '', '_blank')}
-                                      className="text-xs font-black text-blue-600 hover:text-blue-700"
-                                    >
-                                      Lihat
+                                  <div className="flex items-center gap-3">
+                                    {requestDraft.letter?.dataUrl ? (
+                                      <button
+                                        onClick={() => window.open(requestDraft.letter?.dataUrl || '', '_blank')}
+                                        className="text-xs font-black text-blue-600 hover:text-blue-700"
+                                      >
+                                        Download
+                                      </button>
+                                    ) : null}
+                                    <button onClick={handleRemoveLetter} className="text-xs font-black text-rose-600 hover:text-rose-700">
+                                      Hapus
                                     </button>
-                                  ) : null}
+                                  </div>
                                 </div>
                               )}
+                              <p className="mt-2 text-[10px] font-bold text-slate-400">Format: PDF • Maks 2MB</p>
                             </div>
                             <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3">
                               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Jenis Permintaan Perangkat</p>
@@ -2898,6 +2978,45 @@ function App() {
                                 </div>
                               )}
                             </div>
+                          </div>
+                        </div>
+
+                        <div className="border border-slate-100 rounded-3xl p-5">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Berita Acara Serah Terima Barang</p>
+                              <p className="text-xs font-black text-slate-900 mt-1">Upload berita acara (opsional)</p>
+                            </div>
+                            <div className={`px-3 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-2 ${getStatusBadge(requestDraft.beritaAcara ? 'ok' : 'pending').className}`}>
+                              {getStatusBadge(requestDraft.beritaAcara ? 'ok' : 'pending').icon}
+                              {getStatusBadge(requestDraft.beritaAcara ? 'ok' : 'pending').text}
+                            </div>
+                          </div>
+                          <div className="mt-4 bg-slate-50 border border-slate-100 rounded-2xl p-3">
+                            <label className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-2 flex items-center justify-center gap-2 font-bold text-xs text-slate-700 hover:bg-slate-50 cursor-pointer">
+                              <FileUp className="w-5 h-5 text-slate-500" />
+                              <span>{requestDraft.beritaAcara ? 'Ganti Berita Acara' : 'Pilih Berita Acara'}</span>
+                              <input type="file" className="hidden" accept="application/pdf,.pdf" onChange={handleBeritaAcaraUpload} />
+                            </label>
+                            {requestDraft.beritaAcara ? (
+                              <div className="mt-3 flex items-center justify-between gap-3">
+                                <p className="text-xs font-bold text-slate-600 truncate">{requestDraft.beritaAcara.fileName}</p>
+                                <div className="flex items-center gap-3">
+                                  {requestDraft.beritaAcara.dataUrl ? (
+                                    <button
+                                      onClick={() => window.open(requestDraft.beritaAcara?.dataUrl || '', '_blank')}
+                                      className="text-xs font-black text-blue-600 hover:text-blue-700"
+                                    >
+                                      Download
+                                    </button>
+                                  ) : null}
+                                  <button onClick={handleRemoveBeritaAcara} className="text-xs font-black text-rose-600 hover:text-rose-700">
+                                    Hapus
+                                  </button>
+                                </div>
+                              </div>
+                            ) : null}
+                            <p className="mt-2 text-[10px] font-bold text-slate-400">Format: PDF • Maks 2MB</p>
                           </div>
                         </div>
 
@@ -3002,6 +3121,148 @@ function App() {
                             />
                           </div>
                         </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isAddDeviceModalOpen && requestDraft && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-[3rem] w-full max-w-6xl max-h-[calc(100vh-2rem)] overflow-hidden shadow-2xl relative">
+              <button onClick={() => setIsAddDeviceModalOpen(false)} className="absolute top-8 right-8 p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl z-20">
+                <XCircle className="w-6 h-6 text-slate-400" />
+              </button>
+              <div className="p-6 md:p-10 overflow-y-auto max-h-[calc(100vh-2rem)]">
+                <div className="mb-6">
+                  <h3 className="text-xl font-black text-slate-900">Tambah Perangkat — {requestDraft.samsat}</h3>
+                  <p className="text-xs text-slate-500 font-bold mt-1">Input perangkat mengikuti status stok. Disposisi ditampilkan sebagai status.</p>
+                </div>
+
+                {(() => {
+                  const suratOk = !!requestDraft.letter && requestDraft.requestedCount > 0;
+                  const stockOk = requestDraft.stockStatus === 'ready';
+                  const stockNo = requestDraft.stockStatus === 'empty';
+                  const stockBadge = getStatusBadge(stockOk ? 'ok' : stockNo ? 'no' : 'pending');
+                  const kabidBadge = getStatusBadge(requestDraft.kabid.status === 'approved' ? 'ok' : requestDraft.kabid.status === 'rejected' ? 'no' : 'pending');
+                  const sekbanBadge = getStatusBadge(requestDraft.sekban.status === 'approved' ? 'ok' : requestDraft.sekban.status === 'rejected' ? 'no' : 'pending');
+
+                  const approvedCount = getApprovedCount(requestDraft);
+                  const remaining = approvedCount - requestDraft.addedDeviceIds.length;
+                  const canInput = suratOk && approvedCount > 0;
+
+                  return (
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      <div className="space-y-4">
+                        <div className="border border-slate-100 rounded-3xl p-5">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Surat & Jumlah</p>
+                              <p className="text-sm font-black text-slate-900 mt-1">{requestDraft.requestType} • {requestDraft.requestedCount} unit</p>
+                              <p className="text-xs font-bold text-slate-500 mt-1">{requestDraft.letter ? requestDraft.letter.fileName : 'Belum ada surat'}</p>
+                            </div>
+                            <div className={`px-3 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-2 ${getStatusBadge(suratOk ? 'ok' : 'pending').className}`}>
+                              {getStatusBadge(suratOk ? 'ok' : 'pending').icon}
+                              {getStatusBadge(suratOk ? 'ok' : 'pending').text}
+                            </div>
+                          </div>
+                          {requestDraft.letter?.dataUrl ? (
+                            <button
+                              onClick={() => window.open(requestDraft.letter?.dataUrl || '', '_blank')}
+                              className="mt-4 w-full bg-slate-900 hover:bg-slate-950 text-white py-3 rounded-2xl font-black text-xs"
+                            >
+                              Download Surat (PDF)
+                            </button>
+                          ) : null}
+                        </div>
+
+                        <div className="border border-slate-100 rounded-3xl p-5">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Koreksi Stok</p>
+                              <p className="text-sm font-black text-slate-900 mt-1">
+                                {requestDraft.stockStatus === 'ready' ? 'Stok Ready' : requestDraft.stockStatus === 'empty' ? 'Stok Empty' : 'Standby'}
+                              </p>
+                            </div>
+                            <div className={`px-3 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-2 ${stockBadge.className}`}>
+                              {stockBadge.icon}
+                              {stockBadge.text}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="border border-slate-100 rounded-3xl p-5">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Disposisi Kabid IPSIPD</p>
+                              <p className="text-sm font-black text-slate-900 mt-1">
+                                {requestDraft.kabid.status === 'approved' ? 'Setuju' : requestDraft.kabid.status === 'rejected' ? 'Tidak Setuju' : 'Dalam Proses'}
+                              </p>
+                            </div>
+                            <div className={`px-3 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-2 ${kabidBadge.className}`}>
+                              {kabidBadge.icon}
+                              {kabidBadge.text}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="border border-slate-100 rounded-3xl p-5">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Disposisi Sekretaris Badan</p>
+                              <p className="text-sm font-black text-slate-900 mt-1">
+                                {requestDraft.sekban.status === 'approved' ? 'Setuju' : requestDraft.sekban.status === 'rejected' ? 'Tidak Setuju' : 'Dalam Proses'}
+                              </p>
+                            </div>
+                            <div className={`px-3 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-2 ${sekbanBadge.className}`}>
+                              {sekbanBadge.icon}
+                              {sekbanBadge.text}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="border border-slate-100 rounded-3xl p-5">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Upload Berita Acara Serah Terima Barang</p>
+                              <p className="text-xs font-black text-slate-900 mt-1">PDF (opsional)</p>
+                            </div>
+                            <div className={`px-3 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-2 ${getStatusBadge(requestDraft.beritaAcara ? 'ok' : 'pending').className}`}>
+                              {getStatusBadge(requestDraft.beritaAcara ? 'ok' : 'pending').icon}
+                              {getStatusBadge(requestDraft.beritaAcara ? 'ok' : 'pending').text}
+                            </div>
+                          </div>
+                          <div className="mt-4 bg-slate-50 border border-slate-100 rounded-2xl p-3">
+                            <label className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-2 flex items-center justify-center gap-2 font-bold text-xs text-slate-700 hover:bg-slate-50 cursor-pointer">
+                              <FileUp className="w-5 h-5 text-slate-500" />
+                              <span>{requestDraft.beritaAcara ? 'Ganti Berita Acara' : 'Pilih Berita Acara'}</span>
+                              <input type="file" className="hidden" accept="application/pdf,.pdf" onChange={handleBeritaAcaraUpload} />
+                            </label>
+                            {requestDraft.beritaAcara ? (
+                              <div className="mt-3 flex items-center justify-between gap-3">
+                                <p className="text-xs font-bold text-slate-600 truncate">{requestDraft.beritaAcara.fileName}</p>
+                                <div className="flex items-center gap-3">
+                                  {requestDraft.beritaAcara.dataUrl ? (
+                                    <button
+                                      onClick={() => window.open(requestDraft.beritaAcara?.dataUrl || '', '_blank')}
+                                      className="text-xs font-black text-blue-600 hover:text-blue-700"
+                                    >
+                                      Download
+                                    </button>
+                                  ) : null}
+                                  <button onClick={handleRemoveBeritaAcara} className="text-xs font-black text-rose-600 hover:text-rose-700">
+                                    Hapus
+                                  </button>
+                                </div>
+                              </div>
+                            ) : null}
+                            <p className="mt-2 text-[10px] font-bold text-slate-400">Format: PDF • Maks 2MB</p>
+                          </div>
+                        </div>
                       </div>
 
                       <div className="space-y-4">
@@ -3009,7 +3270,7 @@ function App() {
                           <div className="flex items-center justify-between">
                             <div>
                               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Input Perangkat</p>
-                              <p className="text-xs font-black text-slate-900 mt-1">Masukkan perangkat sesuai jumlah disetujui</p>
+                              <p className="text-xs font-black text-slate-900 mt-1">Masukkan perangkat sesuai jumlah diminta</p>
                             </div>
                             <div className={`px-3 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-2 ${getStatusBadge(canInput && remaining > 0 ? 'pending' : canInput && remaining <= 0 && approvedCount > 0 ? 'ok' : 'pending').className}`}>
                               {getStatusBadge(canInput && remaining > 0 ? 'pending' : canInput && remaining <= 0 && approvedCount > 0 ? 'ok' : 'pending').icon}
@@ -3017,29 +3278,21 @@ function App() {
                             </div>
                           </div>
 
-                          {!suratOk && (
+                          {!suratOk ? (
                             <div className="mt-5 bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-sm font-bold text-slate-600">
                               Upload surat dan isi jumlah perangkat yang diminta.
                             </div>
-                          )}
-
-                          {suratOk && requestDraft.stockStatus !== 'ready' && (
+                          ) : requestDraft.stockStatus !== 'ready' ? (
                             <div className="mt-5 bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-sm font-bold text-slate-600">
                               Koreksi stok harus <span className="text-emerald-700">Stok Ready</span> untuk lanjut input perangkat.
                             </div>
-                          )}
+                          ) : null}
 
-                          {suratOk && requestDraft.stockStatus === 'ready' && (
-                            <div className="mt-5 bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-sm font-bold text-slate-600">
-                              Disposisi tetap dapat diproses, namun input perangkat hanya mengikuti status stok.
-                            </div>
-                          )}
-
-                          {canInput && (
+                          {canInput ? (
                             <>
                               {approvedCount > 0 && remaining <= 0 ? (
                                 <div className="mt-5 bg-emerald-50 border border-emerald-100 rounded-2xl px-4 py-3 text-sm font-black text-emerald-700">
-                                  PERMINTAAN DISETUJUI, jumlah perangkat yang disetujui: {approvedCount}
+                                  SELESAI INPUT, jumlah perangkat: {approvedCount}
                                 </div>
                               ) : (
                                 <div className="mt-5 bg-amber-50 border border-amber-100 rounded-2xl px-4 py-3 text-sm font-black text-amber-800">
@@ -3116,7 +3369,7 @@ function App() {
                                 Tambah Perangkat (1)
                               </button>
                             </>
-                          )}
+                          ) : null}
                         </div>
 
                         <div className="border border-slate-100 rounded-3xl p-6">
@@ -3125,11 +3378,11 @@ function App() {
                               <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Perangkat Ditambahkan</p>
                               <p className="text-sm font-black text-slate-900 mt-1">{requestDraft.addedDeviceIds.length} perangkat</p>
                             </div>
-                            {approvedCount > 0 && (
+                            {approvedCount > 0 ? (
                               <div className="text-[11px] font-black text-slate-600">
-                                Disetujui: {approvedCount}
+                                Target: {approvedCount}
                               </div>
-                            )}
+                            ) : null}
                           </div>
                           <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
                             {devices.filter(d => requestDraft.addedDeviceIds.includes(d.id)).map(d => (
@@ -3138,16 +3391,16 @@ function App() {
                                   <p className="text-sm font-black text-slate-900 truncate">{d.name}</p>
                                   <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider truncate">{d.serviceUnit} • {d.subLocation}</p>
                                 </div>
-                                <button onClick={() => deleteDevice(d)} className="p-2 rounded-xl hover:bg-rose-50 text-rose-600">
+                                <button onClick={() => deleteDevice(d)} className="p-2 rounded-xl hover:bg-rose-50 text-rose-600" aria-label="Hapus perangkat">
                                   <Trash2 className="w-5 h-5" />
                                 </button>
                               </div>
                             ))}
-                            {devices.filter(d => requestDraft.addedDeviceIds.includes(d.id)).length === 0 && (
+                            {devices.filter(d => requestDraft.addedDeviceIds.includes(d.id)).length === 0 ? (
                               <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-sm font-bold text-slate-600">
                                 Belum ada perangkat yang ditambahkan.
                               </div>
-                            )}
+                            ) : null}
                           </div>
                         </div>
                       </div>
@@ -3599,6 +3852,35 @@ function App() {
                             {getStatusBadge(suratOk ? 'ok' : 'pending').text}
                           </div>
                         </div>
+                        {requestStatusDraft.letter?.dataUrl ? (
+                          <button
+                            onClick={() => window.open(requestStatusDraft.letter?.dataUrl || '', '_blank')}
+                            className="mt-4 w-full bg-slate-900 hover:bg-slate-950 text-white py-3 rounded-2xl font-black text-xs"
+                          >
+                            Download Surat (PDF)
+                          </button>
+                        ) : null}
+                      </div>
+
+                      <div className="border border-slate-100 rounded-3xl p-5">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Berita Acara Serah Terima Barang</p>
+                            <p className="text-xs font-bold text-slate-500 mt-1">{requestStatusDraft.beritaAcara ? requestStatusDraft.beritaAcara.fileName : 'Belum ada berita acara'}</p>
+                          </div>
+                          <div className={`px-3 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-2 ${getStatusBadge(requestStatusDraft.beritaAcara ? 'ok' : 'pending').className}`}>
+                            {getStatusBadge(requestStatusDraft.beritaAcara ? 'ok' : 'pending').icon}
+                            {getStatusBadge(requestStatusDraft.beritaAcara ? 'ok' : 'pending').text}
+                          </div>
+                        </div>
+                        {requestStatusDraft.beritaAcara?.dataUrl ? (
+                          <button
+                            onClick={() => window.open(requestStatusDraft.beritaAcara?.dataUrl || '', '_blank')}
+                            className="mt-4 w-full bg-white border border-slate-200 hover:bg-slate-50 text-slate-900 py-3 rounded-2xl font-black text-xs"
+                          >
+                            Download Berita Acara (PDF)
+                          </button>
+                        ) : null}
                       </div>
 
                       <div className="border border-slate-100 rounded-3xl p-5">
