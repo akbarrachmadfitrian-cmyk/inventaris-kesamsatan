@@ -430,9 +430,10 @@ const normalizeCondition = (raw: string) => {
   if (!v) return 'Kurang Baik';
   const u = v.toUpperCase();
   if ((u.includes('NON') && u.includes('AKTIF')) || u.includes('INACTIVE')) return 'Rusak';
-  if (u.includes('BAIK') || u.includes('AKTIF') || u.includes('ACTIVE') || u.includes('NORMAL') || u.includes('OK')) return 'Baik';
+  if (u.includes('TIDAK BAIK')) return 'Rusak';
+  if (u.includes('RUSAK') || u.includes('MATI') || u.includes('ERROR') || u.includes('LAYAR')) return 'Rusak';
   if (u.includes('KURANG') || u.includes('MINOR') || u.includes('LEMOT')) return 'Kurang Baik';
-  if (u.includes('RUSAK') || u.includes('MATI') || u.includes('ERROR') || u.includes('TIDAK BAIK') || u.includes('LAYAR')) return 'Rusak';
+  if (u.includes('BAIK') || u.includes('AKTIF') || u.includes('ACTIVE') || u.includes('NORMAL') || u.includes('OK')) return 'Baik';
   return 'Kurang Baik';
 };
 
