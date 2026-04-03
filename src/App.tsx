@@ -1782,7 +1782,14 @@ function App() {
         });
         setDevices(finalDevices);
         return;
-      } catch {
+      } catch (e) {
+        const err = e as unknown;
+        if (axios.isAxiosError(err) && err.response?.status === 403) {
+          setDbAvailable(false);
+          setDbNeedsImport(false);
+          window.alert('Akses database ditolak. Pastikan API key benar.');
+          return;
+        }
         setDbAvailable(false);
         setDbNeedsImport(false);
       }
@@ -1957,6 +1964,10 @@ function App() {
     if (strictSheetSync) return;
     if (!isAdmin) return;
     if (!selectedDevice || !editForm.id) return;
+    if (!dbAvailable) {
+      window.alert('Tidak dapat menyimpan ke database. Pastikan akses database aktif (API key benar), lalu muat ulang data.');
+      return;
+    }
     
     const updatedDeviceId = editForm.id;
     const updatedData = { ...selectedDevice, ...editForm };
@@ -2971,6 +2982,7 @@ function App() {
                         <div><p className="text-slate-400 uppercase text-[10px] tracking-widest mb-1">No HP User</p><p className="text-slate-900">{selectedDevice.phoneNumber || '-'}</p></div>
                         <div><p className="text-slate-400 uppercase text-[10px] tracking-widest mb-1">Pemegang</p><p className="text-slate-900">{selectedDevice.subLocation || '-'}</p></div>
                         <div><p className="text-slate-400 uppercase text-[10px] tracking-widest mb-1">Samsat</p><p className="text-slate-900">{selectedDevice.samsat}</p></div>
+                        <div><p className="text-slate-400 uppercase text-[10px] tracking-widest mb-1">Sumber Data</p><p className="text-slate-900">{selectedDevice.sheetName || '-'}</p></div>
                         <div><p className="text-slate-400 uppercase text-[10px] tracking-widest mb-1">Tahun Anggaran</p><p className="text-slate-900">{selectedDevice.budgetYear || '-'}</p></div>
                         <div><p className="text-slate-400 uppercase text-[10px] tracking-widest mb-1">Sumber Anggaran</p><p className="text-slate-900">{selectedDevice.budgetSource || '-'}</p></div>
                         <div>
