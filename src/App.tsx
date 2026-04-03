@@ -427,18 +427,19 @@ const normalizeFilled = (value: string) => {
 
 const normalizeCondition = (raw: string) => {
   const v = (raw || '').trim();
-  if (!v) return 'Rusak';
+  if (!v) return 'Kurang Baik';
   const u = v.toUpperCase();
   if ((u.includes('NON') && u.includes('AKTIF')) || u.includes('INACTIVE')) return 'Rusak';
   if (u.includes('BAIK') || u.includes('AKTIF') || u.includes('ACTIVE') || u.includes('NORMAL') || u.includes('OK')) return 'Baik';
-  if (u.includes('KURANG') || u.includes('MINOR') || u.includes('LEMOT')) return 'Rusak';
+  if (u.includes('KURANG') || u.includes('MINOR') || u.includes('LEMOT')) return 'Kurang Baik';
   if (u.includes('RUSAK') || u.includes('MATI') || u.includes('ERROR') || u.includes('TIDAK BAIK') || u.includes('LAYAR')) return 'Rusak';
-  return 'Rusak';
+  return 'Kurang Baik';
 };
 
 const getConditionPillClass = (condition: string) => {
   const c = normalizeCondition(condition);
   if (c === 'Baik') return 'bg-emerald-50 text-emerald-600';
+  if (c === 'Kurang Baik') return 'bg-amber-50 text-amber-700';
   return 'bg-rose-50 text-rose-600';
 };
 
@@ -2854,6 +2855,7 @@ function App() {
                             className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm focus:ring-2 focus:ring-blue-500/20 outline-none"
                           >
                             <option value="Baik">Baik</option>
+                            <option value="Kurang Baik">Kurang Baik</option>
                             <option value="Rusak">Rusak</option>
                           </select>
                         </div>
@@ -2938,7 +2940,7 @@ function App() {
                         <div><p className="text-slate-400 uppercase text-[10px] tracking-widest mb-1">Sumber Anggaran</p><p className="text-slate-900">{selectedDevice.budgetSource || '-'}</p></div>
                         <div>
                           <p className="text-slate-400 uppercase text-[10px] tracking-widest mb-1">Kondisi</p>
-                          <p className={normalizeCondition(selectedDevice.condition) === 'Baik' ? 'text-emerald-600' : 'text-rose-600'}>
+                          <p className={normalizeCondition(selectedDevice.condition) === 'Baik' ? 'text-emerald-600' : normalizeCondition(selectedDevice.condition) === 'Kurang Baik' ? 'text-amber-700' : 'text-rose-600'}>
                             {normalizeCondition(selectedDevice.condition)}
                           </p>
                         </div>
@@ -2999,7 +3001,9 @@ function App() {
                           <p className="text-slate-600">User: <span className="text-slate-900">{d.subLocation || '-'}</span></p>
                           <p className="text-slate-600">No HP: <span className="text-slate-900">{d.phoneNumber || '-'}</span></p>
                           <span className={`text-[10px] font-black px-2 py-1 rounded-lg uppercase tracking-widest inline-block w-max ${
-                            normalizeCondition(d.condition) === 'Baik' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-600'
+                            normalizeCondition(d.condition) === 'Baik' ? 'bg-emerald-100 text-emerald-700' :
+                            normalizeCondition(d.condition) === 'Kurang Baik' ? 'bg-amber-100 text-amber-700' :
+                            'bg-rose-100 text-rose-600'
                           }`}>
                             {normalizeCondition(d.condition)}
                           </span>
@@ -3150,7 +3154,9 @@ function App() {
                             <p className="text-slate-600">User: <span className="text-slate-900">{d.subLocation || '-'}</span></p>
                             <p className="text-slate-600">No HP: <span className="text-slate-900">{d.phoneNumber || '-'}</span></p>
                             <span className={`text-[10px] font-black px-2 py-1 rounded-lg uppercase tracking-widest inline-block w-max ${
-                              normalizeCondition(d.condition) === 'Baik' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-600'
+                              normalizeCondition(d.condition) === 'Baik' ? 'bg-emerald-100 text-emerald-700' :
+                              normalizeCondition(d.condition) === 'Kurang Baik' ? 'bg-amber-100 text-amber-700' :
+                              'bg-rose-100 text-rose-600'
                             }`}>
                               {normalizeCondition(d.condition)}
                             </span>
@@ -3508,6 +3514,7 @@ function App() {
                         className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-bold text-sm"
                       >
                         <option value="Baik">Baik</option>
+                        <option value="Kurang Baik">Kurang Baik</option>
                         <option value="Rusak">Rusak</option>
                       </select>
                     </div>
