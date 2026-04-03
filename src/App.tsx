@@ -18,7 +18,7 @@ interface Device {
   subLocation?: string;
   serialNumber: string;
   phoneNumber: string;
-  condition: 'Baik' | 'Kurang Baik' | 'Rusak' | 'Layar Rusak' | string;
+  condition: 'Baik' | 'Rusak' | string;
   budgetYear?: string;
   budgetSource?: string;
   serviceHistory?: string;
@@ -33,7 +33,6 @@ interface Device {
 interface Stats {
   total: number;
   baik: number;
-  kurangBaik: number;
   rusak: number;
   layanan: number;
   lengkapTotal: number;
@@ -428,20 +427,18 @@ const normalizeFilled = (value: string) => {
 
 const normalizeCondition = (raw: string) => {
   const v = (raw || '').trim();
-  if (!v) return 'Kurang Baik';
+  if (!v) return 'Rusak';
   const u = v.toUpperCase();
   if ((u.includes('NON') && u.includes('AKTIF')) || u.includes('INACTIVE')) return 'Rusak';
-  if (u.includes('AKTIF') || u.includes('ACTIVE')) return 'Baik';
-  if (u.includes('RUSAK') || u.includes('MATI') || u.includes('ERROR') || u.includes('TIDAK BAIK')) return 'Rusak';
-  if (u.includes('KURANG')) return 'Kurang Baik';
-  if (u.includes('BAIK')) return 'Baik';
-  return 'Kurang Baik';
+  if (u.includes('BAIK') || u.includes('AKTIF') || u.includes('ACTIVE') || u.includes('NORMAL') || u.includes('OK')) return 'Baik';
+  if (u.includes('KURANG') || u.includes('MINOR') || u.includes('LEMOT')) return 'Rusak';
+  if (u.includes('RUSAK') || u.includes('MATI') || u.includes('ERROR') || u.includes('TIDAK BAIK') || u.includes('LAYAR')) return 'Rusak';
+  return 'Rusak';
 };
 
 const getConditionPillClass = (condition: string) => {
   const c = normalizeCondition(condition);
   if (c === 'Baik') return 'bg-emerald-50 text-emerald-600';
-  if (c === 'Kurang Baik') return 'bg-amber-50 text-amber-700';
   return 'bg-rose-50 text-rose-600';
 };
 
@@ -611,7 +608,7 @@ function App() {
   const [isLayananModalOpen, setIsLayananModalOpen] = useState(false);
   const [isDashboardDevicesModalOpen, setIsDashboardDevicesModalOpen] = useState(false);
   const [dashboardDevicesModalTitle, setDashboardDevicesModalTitle] = useState<string>('Daftar Perangkat');
-  const [dashboardDevicesModalFilter, setDashboardDevicesModalFilter] = useState<'all' | 'Baik' | 'Kurang Baik' | 'Rusak'>('all');
+  const [dashboardDevicesModalFilter, setDashboardDevicesModalFilter] = useState<'all' | 'Baik' | 'Rusak'>('all');
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
   const [requestDraft, setRequestDraft] = useState<DeviceRequest | null>(null);
   const [isRequestHubOpen, setIsRequestHubOpen] = useState(false);
@@ -2113,7 +2110,6 @@ function App() {
   const stats: Stats = useMemo(() => {
     const total = currentSamsatDevices.length;
     const baik = currentSamsatDevices.filter(d => normalizeCondition(d.condition) === 'Baik').length;
-    const kurangBaik = currentSamsatDevices.filter(d => normalizeCondition(d.condition) === 'Kurang Baik').length;
     const rusak = currentSamsatDevices.filter(d => normalizeCondition(d.condition) === 'Rusak').length;
     const layanan = new Set(currentSamsatDevices.map(d => d.serviceUnit)).size;
 
@@ -2129,7 +2125,6 @@ function App() {
     return {
       total,
       baik,
-      kurangBaik,
       rusak,
       layanan,
       lengkapTotal,
@@ -2596,7 +2591,6 @@ function App() {
                 {[
                   { label: 'Total Perangkat', value: stats.total, icon: <Monitor className="w-6 h-6" />, color: 'text-blue-600', bg: 'bg-blue-50', onClick: () => { setDashboardDevicesModalTitle('Daftar Total Perangkat'); setDashboardDevicesModalFilter('all'); setIsDashboardDevicesModalOpen(true); } },
                   { label: 'Kondisi Baik', value: stats.baik, icon: <CheckCircle2 className="w-6 h-6" />, color: 'text-emerald-600', bg: 'bg-emerald-50', onClick: () => { setDashboardDevicesModalTitle('Daftar Perangkat Kondisi Baik'); setDashboardDevicesModalFilter('Baik'); setIsDashboardDevicesModalOpen(true); } },
-                  { label: 'Kurang Baik', value: stats.kurangBaik, icon: <AlertTriangle className="w-6 h-6" />, color: 'text-amber-600', bg: 'bg-amber-50', onClick: () => { setDashboardDevicesModalTitle('Daftar Perangkat Kurang Baik'); setDashboardDevicesModalFilter('Kurang Baik'); setIsDashboardDevicesModalOpen(true); } },
                   { label: 'Rusak / Tidak Baik', value: stats.rusak, icon: <XCircle className="w-6 h-6" />, color: 'text-rose-600', bg: 'bg-rose-50', onClick: () => { setDashboardDevicesModalTitle('Daftar Perangkat Rusak / Tidak Baik'); setDashboardDevicesModalFilter('Rusak'); setIsDashboardDevicesModalOpen(true); } },
                   { label: 'Jenis Layanan', value: stats.layanan, icon: <Layers className="w-6 h-6" />, color: 'text-purple-600', bg: 'bg-purple-50', onClick: () => setIsLayananModalOpen(true) },
                 ].map((stat, i) => (
@@ -2627,9 +2621,7 @@ function App() {
                           <h4 className="text-sm font-black text-slate-900">{d.name}</h4>
                           <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">{d.serviceUnit} • {d.subLocation}</p>
                         </div>
-                        <span className={`text-[10px] font-black px-3 py-1.5 rounded-lg uppercase tracking-widest ${
-                          normalizeCondition(d.condition) === 'Rusak' ? 'bg-rose-100 text-rose-600' : 'bg-amber-100 text-amber-700'
-                        }`}>
+                        <span className="text-[10px] font-black px-3 py-1.5 rounded-lg uppercase tracking-widest bg-rose-100 text-rose-600">
                           {normalizeCondition(d.condition)}
                         </span>
                       </div>
@@ -2645,7 +2637,6 @@ function App() {
                   <div className="space-y-8">
                     {[
                       { label: 'Baik', value: stats.baik, color: 'bg-emerald-500' },
-                      { label: 'Kurang Baik', value: stats.kurangBaik, color: 'bg-amber-500' },
                       { label: 'Rusak / Tidak Baik', value: stats.rusak, color: 'bg-rose-500' },
                     ].map((item, i) => (
                       <div key={i}>
@@ -2863,9 +2854,7 @@ function App() {
                             className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm focus:ring-2 focus:ring-blue-500/20 outline-none"
                           >
                             <option value="Baik">Baik</option>
-                            <option value="Kurang Baik">Kurang Baik</option>
                             <option value="Rusak">Rusak</option>
-                            <option value="Layar Rusak">Layar Rusak</option>
                           </select>
                         </div>
                       </div>
@@ -2949,7 +2938,7 @@ function App() {
                         <div><p className="text-slate-400 uppercase text-[10px] tracking-widest mb-1">Sumber Anggaran</p><p className="text-slate-900">{selectedDevice.budgetSource || '-'}</p></div>
                         <div>
                           <p className="text-slate-400 uppercase text-[10px] tracking-widest mb-1">Kondisi</p>
-                          <p className={normalizeCondition(selectedDevice.condition) === 'Baik' ? 'text-emerald-600' : normalizeCondition(selectedDevice.condition) === 'Kurang Baik' ? 'text-amber-700' : 'text-rose-600'}>
+                          <p className={normalizeCondition(selectedDevice.condition) === 'Baik' ? 'text-emerald-600' : 'text-rose-600'}>
                             {normalizeCondition(selectedDevice.condition)}
                           </p>
                         </div>
@@ -3010,9 +2999,7 @@ function App() {
                           <p className="text-slate-600">User: <span className="text-slate-900">{d.subLocation || '-'}</span></p>
                           <p className="text-slate-600">No HP: <span className="text-slate-900">{d.phoneNumber || '-'}</span></p>
                           <span className={`text-[10px] font-black px-2 py-1 rounded-lg uppercase tracking-widest inline-block w-max ${
-                            normalizeCondition(d.condition) === 'Baik' ? 'bg-emerald-100 text-emerald-700' :
-                            normalizeCondition(d.condition) === 'Kurang Baik' ? 'bg-amber-100 text-amber-700' :
-                            'bg-rose-100 text-rose-600'
+                            normalizeCondition(d.condition) === 'Baik' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-600'
                           }`}>
                             {normalizeCondition(d.condition)}
                           </span>
@@ -3163,9 +3150,7 @@ function App() {
                             <p className="text-slate-600">User: <span className="text-slate-900">{d.subLocation || '-'}</span></p>
                             <p className="text-slate-600">No HP: <span className="text-slate-900">{d.phoneNumber || '-'}</span></p>
                             <span className={`text-[10px] font-black px-2 py-1 rounded-lg uppercase tracking-widest inline-block w-max ${
-                              normalizeCondition(d.condition) === 'Baik' ? 'bg-emerald-100 text-emerald-700' : 
-                              normalizeCondition(d.condition) === 'Kurang Baik' ? 'bg-amber-100 text-amber-700' : 
-                              'bg-rose-100 text-rose-600'
+                              normalizeCondition(d.condition) === 'Baik' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-600'
                             }`}>
                               {normalizeCondition(d.condition)}
                             </span>
@@ -3523,7 +3508,6 @@ function App() {
                         className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 font-bold text-sm"
                       >
                         <option value="Baik">Baik</option>
-                        <option value="Kurang Baik">Kurang Baik</option>
                         <option value="Rusak">Rusak</option>
                       </select>
                     </div>

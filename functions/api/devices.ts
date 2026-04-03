@@ -68,14 +68,15 @@ const normalizeFilled = (value: string) => {
 
 const normalizeCondition = (raw: string) => {
   const v = (raw || '').trim()
-  if (!v) return 'Kurang Baik'
+  if (!v) return 'Rusak'
   const u = v.toUpperCase()
   if ((u.includes('NON') && u.includes('AKTIF')) || u.includes('INACTIVE')) return 'Rusak'
   if (u.includes('AKTIF') || u.includes('ACTIVE')) return 'Baik'
   if (u.includes('RUSAK') || u.includes('MATI') || u.includes('ERROR') || u.includes('TIDAK BAIK')) return 'Rusak'
-  if (u.includes('KURANG') || u.includes('MINOR') || u.includes('LEMOT')) return 'Kurang Baik'
+  if (u.includes('KURANG') || u.includes('MINOR') || u.includes('LEMOT')) return 'Rusak'
   if (u.includes('BAIK') || u.includes('NORMAL') || u.includes('OK')) return 'Baik'
-  return v
+  if (u.includes('LAYAR')) return 'Rusak'
+  return 'Rusak'
 }
 
 const parseCsvLine = (line: string, separator: string) => {
@@ -345,7 +346,7 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
     const serialNumber = String(payload.serialNumber || payload.serial_number || '').trim()
     const phoneNumber = String(payload.phoneNumber || payload.phone_number || '').trim()
     const subLocation = String(payload.subLocation || payload.holder_name || '').trim()
-    const condition = String(payload.condition || '').trim()
+    const condition = normalizeCondition(String(payload.condition || ''))
     const budgetYear = String(payload.budgetYear || payload.budget_year || '').trim()
     const budgetSource = String(payload.budgetSource || payload.budget_source || '').trim()
     const serviceHistory = String(payload.serviceHistory || payload.service_history || '').trim()
@@ -517,7 +518,7 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
   const serialNumber = String(payload.serialNumber || payload.serial_number || '').trim()
   const phoneNumber = String(payload.phoneNumber || payload.phone_number || '').trim()
   const subLocation = String(payload.subLocation || payload.holder_name || '').trim()
-  const condition = String(payload.condition || '').trim()
+  const condition = normalizeCondition(String(payload.condition || ''))
   const budgetYear = String(payload.budgetYear || payload.budget_year || '').trim()
   const budgetSource = String(payload.budgetSource || payload.budget_source || '').trim()
   const serviceHistory = String(payload.serviceHistory || payload.service_history || '').trim()
