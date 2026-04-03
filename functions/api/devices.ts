@@ -316,8 +316,18 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
   const action = String(data.action || 'create')
 
   if (action === 'delete') {
-    const id = String(data.id || '').trim()
-    if (!id) return json({ error: 'id wajib diisi' }, { status: 400 })
+    const idRaw = String(data.id || '')
+    const candidates = Array.from(new Set([idRaw, idRaw.trim()])).filter(v => v)
+    if (candidates.length === 0) return json({ error: 'id wajib diisi' }, { status: 400 })
+    let id: string | null = null
+    for (const c of candidates) {
+      const found = await env.DB.prepare('SELECT id FROM devices WHERE id = ? AND deleted_at IS NULL').bind(c).first<Record<string, unknown>>()
+      if (found?.id) {
+        id = String(found.id)
+        break
+      }
+    }
+    if (!id) return json({ error: 'perangkat tidak ditemukan' }, { status: 404 })
     const now = nowIso()
     await env.DB.prepare('UPDATE devices SET deleted_at = ?, updated_at = ? WHERE id = ?').bind(now, now, id).run()
     return json({ ok: true }, { status: 200 })
@@ -326,8 +336,18 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
   if (action === 'update') {
     const payload = data.payload && typeof data.payload === 'object' ? (data.payload as Record<string, unknown>) : null
     if (!payload) return json({ error: 'payload wajib diisi' }, { status: 400 })
-    const id = String(payload.id || '').trim()
-    if (!id) return json({ error: 'payload.id wajib diisi' }, { status: 400 })
+    const idRaw = String(payload.id || '')
+    const idCandidates = Array.from(new Set([idRaw, idRaw.trim()])).filter(v => v)
+    if (idCandidates.length === 0) return json({ error: 'payload.id wajib diisi' }, { status: 400 })
+    let id: string | null = null
+    for (const c of idCandidates) {
+      const found = await env.DB.prepare('SELECT id FROM devices WHERE id = ? AND deleted_at IS NULL').bind(c).first<Record<string, unknown>>()
+      if (found?.id) {
+        id = String(found.id)
+        break
+      }
+    }
+    if (!id) return json({ error: 'perangkat tidak ditemukan' }, { status: 404 })
 
     const samsat = String(payload.samsat || '').trim()
     const name = String(payload.name || '').trim()
