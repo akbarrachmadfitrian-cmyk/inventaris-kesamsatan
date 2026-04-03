@@ -1708,7 +1708,34 @@ function App() {
     setLoading(true);
     try {
       try {
-        const res = await axios.get('/api/public/devices?limit=500', { timeout: 8000 });
+        const fetchFromDb = async () => axios.get('/api/public/devices?limit=500', { timeout: 8000 });
+        let res: Awaited<ReturnType<typeof fetchFromDb>>;
+        try {
+          res = await fetchFromDb();
+        } catch (e) {
+          const err = e as unknown;
+          if (axios.isAxiosError(err) && err.response?.status === 403) {
+            if (session?.role === 'admin') {
+              const key = String(window.prompt('Akses database ditolak. Masukkan Admin API Key:') || '').trim();
+              if (!key) throw err;
+              localStorage.setItem('admin_api_key', key);
+              axios.defaults.headers.common['x-admin-key'] = key;
+              delete axios.defaults.headers.common['x-user-key'];
+              res = await fetchFromDb();
+            } else if (session?.role === 'user') {
+              const key = String(window.prompt('Akses database ditolak. Masukkan User API Key:') || '').trim();
+              if (!key) throw err;
+              localStorage.setItem('user_api_key', key);
+              axios.defaults.headers.common['x-user-key'] = key;
+              delete axios.defaults.headers.common['x-admin-key'];
+              res = await fetchFromDb();
+            } else {
+              throw err;
+            }
+          } else {
+            throw err;
+          }
+        }
         const itemsRaw = (res.data?.items || []) as Array<{
           id: string;
           samsat: string;
@@ -1862,7 +1889,15 @@ function App() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [session?.role]);
+
+  useEffect(() => {
+    if (!selectedDevice) return;
+    if (isEditing) return;
+    const next = devices.find(d => d.id === selectedDevice.id);
+    if (!next) return;
+    setSelectedDevice(next);
+  }, [devices, selectedDevice, isEditing]);
 
   const importSheetsToDb = useCallback(async () => {
     if (!isAdmin) return;
