@@ -336,19 +336,6 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
   if (action === 'update') {
     const payload = data.payload && typeof data.payload === 'object' ? (data.payload as Record<string, unknown>) : null
     if (!payload) return json({ error: 'payload wajib diisi' }, { status: 400 })
-    const idRaw = String(payload.id || '')
-    const idCandidates = Array.from(new Set([idRaw, idRaw.trim()])).filter(v => v)
-    if (idCandidates.length === 0) return json({ error: 'payload.id wajib diisi' }, { status: 400 })
-    let id: string | null = null
-    for (const c of idCandidates) {
-      const found = await env.DB.prepare('SELECT id FROM devices WHERE id = ? AND deleted_at IS NULL').bind(c).first<Record<string, unknown>>()
-      if (found?.id) {
-        id = String(found.id)
-        break
-      }
-    }
-    if (!id) return json({ error: 'perangkat tidak ditemukan' }, { status: 404 })
-
     const samsat = String(payload.samsat || '').trim()
     const name = String(payload.name || '').trim()
     const category = String(payload.category || '').trim()
@@ -365,6 +352,30 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
     if (!samsat || !name || !serviceUnit) return json({ error: 'samsat, name, serviceUnit wajib diisi' }, { status: 400 })
 
     const samsatId = await ensureSamsat(env.DB, samsat)
+    const idRaw = String(payload.id || '')
+    const idCandidates = Array.from(new Set([idRaw, idRaw.trim()])).filter(v => v)
+    let id: string | null = null
+    for (const c of idCandidates) {
+      const found = await env.DB.prepare('SELECT id FROM devices WHERE id = ? AND deleted_at IS NULL').bind(c).first<Record<string, unknown>>()
+      if (found?.id) {
+        id = String(found.id)
+        break
+      }
+    }
+    if (!id && serialNumber && serialNumber.toLowerCase() !== 'n/a') {
+      const found = await env.DB
+        .prepare(
+          `SELECT id
+           FROM devices
+           WHERE samsat_id = ? AND deleted_at IS NULL
+             AND UPPER(TRIM(serial_number)) = UPPER(TRIM(?))
+           LIMIT 1`
+        )
+        .bind(samsatId, serialNumber)
+        .first<Record<string, unknown>>()
+      if (found?.id) id = String(found.id)
+    }
+    if (!id) return json({ error: 'perangkat tidak ditemukan' }, { status: 404 })
     const now = nowIso()
     const withBudget = await hasBudgetColumns(env.DB)
     if (withBudget) {
