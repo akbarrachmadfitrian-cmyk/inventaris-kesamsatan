@@ -1938,35 +1938,79 @@ function App() {
     const nextDataComplete = normalizeFilled(nextSerial) && normalizeFilled(nextPhone);
     const finalUpdatedData = { ...updatedData, dataComplete: nextDataComplete };
     
-    // Update local state
-    setDevices(prev => prev.map(d => d.id === updatedDeviceId ? (finalUpdatedData as Device) : d));
-    setSelectedDevice(finalUpdatedData as Device);
-    setIsEditing(false);
-    
     if (dbAvailable) {
       try {
-        await axios.post('/api/admin/devices', {
-          action: 'update',
-          payload: {
-            id: updatedDeviceId,
-            samsat: String(finalUpdatedData.samsat || finalUpdatedData.location || '').trim(),
-            name: String(finalUpdatedData.name || '').trim(),
-            category: String(finalUpdatedData.category || '').trim(),
-            serviceUnit: String(finalUpdatedData.serviceUnit || '').trim(),
-            serialNumber: String(finalUpdatedData.serialNumber || '').trim(),
-            phoneNumber: String(finalUpdatedData.phoneNumber || '').trim(),
-            subLocation: String(finalUpdatedData.subLocation || '').trim(),
-            condition: String(finalUpdatedData.condition || '').trim(),
-            budgetYear: String(finalUpdatedData.budgetYear || '').trim(),
-            budgetSource: String(finalUpdatedData.budgetSource || '').trim(),
-            serviceHistory: String(finalUpdatedData.serviceHistory || '').trim()
+        const doUpdate = async () => {
+          await axios.post(
+            '/api/admin/devices',
+            {
+              action: 'update',
+              payload: {
+                id: updatedDeviceId,
+                samsat: String(finalUpdatedData.samsat || finalUpdatedData.location || '').trim(),
+                name: String(finalUpdatedData.name || '').trim(),
+                category: String(finalUpdatedData.category || '').trim(),
+                serviceUnit: String(finalUpdatedData.serviceUnit || '').trim(),
+                serialNumber: String(finalUpdatedData.serialNumber || '').trim(),
+                phoneNumber: String(finalUpdatedData.phoneNumber || '').trim(),
+                subLocation: String(finalUpdatedData.subLocation || '').trim(),
+                condition: String(finalUpdatedData.condition || '').trim(),
+                budgetYear: String(finalUpdatedData.budgetYear || '').trim(),
+                budgetSource: String(finalUpdatedData.budgetSource || '').trim(),
+                serviceHistory: String(finalUpdatedData.serviceHistory || '').trim(),
+              },
+            },
+            { timeout: 8000 }
+          );
+        };
+
+        try {
+          await doUpdate();
+        } catch (e) {
+          const err = e as unknown;
+          if (axios.isAxiosError(err) && err.response?.status === 403) {
+            const key = String(window.prompt('Akses ditolak. Masukkan ulang Admin API Key:') || '').trim();
+            if (key) {
+              localStorage.setItem('admin_api_key', key);
+              axios.defaults.headers.common['x-admin-key'] = key;
+              await doUpdate();
+            } else {
+              throw err;
+            }
+          } else {
+            throw err;
           }
-        }, { timeout: 8000 });
-      } catch {
-        window.alert('Gagal menyimpan perubahan ke database.');
+        }
+
+        setDevices(prev => prev.map(d => (d.id === updatedDeviceId ? (finalUpdatedData as Device) : d)));
+        setSelectedDevice(finalUpdatedData as Device);
+        setIsEditing(false);
+        fetchData();
+      } catch (e) {
+        setDevices(prev => prev.map(d => (d.id === updatedDeviceId ? (selectedDevice as Device) : d)));
+        setSelectedDevice(selectedDevice as Device);
+        setIsEditing(true);
+
+        let msg = 'Gagal menyimpan perubahan ke database.';
+        const err = e as unknown;
+        if (axios.isAxiosError(err)) {
+          const data = err.response?.data as unknown;
+          if (data && typeof data === 'object' && 'error' in data) {
+            msg = String((data as { error?: unknown }).error ?? err.message);
+          } else {
+            msg = err.message;
+          }
+        } else if (err instanceof Error) {
+          msg = err.message;
+        }
+        window.alert(msg);
       }
       return;
     }
+
+    setDevices(prev => prev.map(d => d.id === updatedDeviceId ? (finalUpdatedData as Device) : d));
+    setSelectedDevice(finalUpdatedData as Device);
+    setIsEditing(false);
 
     const updatedDevices = JSON.parse(localStorage.getItem('samsat_updated_devices') || '{}');
     updatedDevices[updatedDeviceId] = {
