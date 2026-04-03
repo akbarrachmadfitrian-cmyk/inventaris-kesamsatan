@@ -430,6 +430,8 @@ const normalizeCondition = (raw: string) => {
   const v = (raw || '').trim();
   if (!v) return 'Kurang Baik';
   const u = v.toUpperCase();
+  if ((u.includes('NON') && u.includes('AKTIF')) || u.includes('INACTIVE')) return 'Rusak';
+  if (u.includes('AKTIF') || u.includes('ACTIVE')) return 'Baik';
   if (u.includes('RUSAK') || u.includes('MATI') || u.includes('ERROR') || u.includes('TIDAK BAIK')) return 'Rusak';
   if (u.includes('KURANG')) return 'Kurang Baik';
   if (u.includes('BAIK')) return 'Baik';
@@ -2818,7 +2820,11 @@ function App() {
                         <button
                           onClick={() => {
                             setIsEditing(true);
-                            setEditForm({ ...selectedDevice });
+                            setEditForm({
+                              ...selectedDevice,
+                              condition: normalizeCondition(selectedDevice.condition),
+                              budgetSource: selectedDevice.budgetSource || 'APBD'
+                            });
                           }}
                           className="px-10 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black tracking-wider transition-all shadow-lg shadow-blue-200"
                         >

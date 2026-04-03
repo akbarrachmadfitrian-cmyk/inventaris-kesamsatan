@@ -70,6 +70,8 @@ const normalizeCondition = (raw: string) => {
   const v = (raw || '').trim()
   if (!v) return 'Kurang Baik'
   const u = v.toUpperCase()
+  if ((u.includes('NON') && u.includes('AKTIF')) || u.includes('INACTIVE')) return 'Rusak'
+  if (u.includes('AKTIF') || u.includes('ACTIVE')) return 'Baik'
   if (u.includes('RUSAK') || u.includes('MATI') || u.includes('ERROR') || u.includes('TIDAK BAIK')) return 'Rusak'
   if (u.includes('KURANG') || u.includes('MINOR') || u.includes('LEMOT')) return 'Kurang Baik'
   if (u.includes('BAIK') || u.includes('NORMAL') || u.includes('OK')) return 'Baik'
