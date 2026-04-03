@@ -716,7 +716,7 @@ function App() {
       delete axios.defaults.headers.common['x-admin-key'];
       delete axios.defaults.headers.common['x-user-key'];
     }
-  }, [session?.role]);
+  }, [session]);
 
   const handleLogin = (role: AuthRole) => {
     const creds = getAuthCredentials();
@@ -1707,6 +1707,7 @@ function App() {
   };
 
   const fetchData = useCallback(async () => {
+    if (!session) return;
     setLoading(true);
     try {
       try {
@@ -1898,7 +1899,7 @@ function App() {
     } finally {
       setLoading(false);
     }
-  }, [session?.role]);
+  }, [session]);
 
   useEffect(() => {
     if (!selectedDevice) return;
@@ -1938,8 +1939,9 @@ function App() {
   }, [fetchData, isAdmin]);
 
   useEffect(() => {
+    if (!session) return;
     fetchData();
-  }, [fetchData]);
+  }, [fetchData, session]);
 
   const handlePhotoUpload = (deviceId: string, e: React.ChangeEvent<HTMLInputElement>) => {
     if (!isAdmin) {
