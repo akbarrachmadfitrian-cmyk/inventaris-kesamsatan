@@ -33,6 +33,7 @@ interface Device {
 interface Stats {
   total: number;
   baik: number;
+  kurangBaik: number;
   rusak: number;
   layanan: number;
   lengkapTotal: number;
@@ -610,7 +611,7 @@ function App() {
   const [isLayananModalOpen, setIsLayananModalOpen] = useState(false);
   const [isDashboardDevicesModalOpen, setIsDashboardDevicesModalOpen] = useState(false);
   const [dashboardDevicesModalTitle, setDashboardDevicesModalTitle] = useState<string>('Daftar Perangkat');
-  const [dashboardDevicesModalFilter, setDashboardDevicesModalFilter] = useState<'all' | 'Baik' | 'Rusak'>('all');
+  const [dashboardDevicesModalFilter, setDashboardDevicesModalFilter] = useState<'all' | 'Baik' | 'Kurang Baik' | 'Rusak'>('all');
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
   const [requestDraft, setRequestDraft] = useState<DeviceRequest | null>(null);
   const [isRequestHubOpen, setIsRequestHubOpen] = useState(false);
@@ -2158,6 +2159,7 @@ function App() {
   const stats: Stats = useMemo(() => {
     const total = currentSamsatDevices.length;
     const baik = currentSamsatDevices.filter(d => normalizeCondition(d.condition) === 'Baik').length;
+    const kurangBaik = currentSamsatDevices.filter(d => normalizeCondition(d.condition) === 'Kurang Baik').length;
     const rusak = currentSamsatDevices.filter(d => normalizeCondition(d.condition) === 'Rusak').length;
     const layanan = new Set(currentSamsatDevices.map(d => d.serviceUnit)).size;
 
@@ -2173,6 +2175,7 @@ function App() {
     return {
       total,
       baik,
+      kurangBaik,
       rusak,
       layanan,
       lengkapTotal,
@@ -2639,6 +2642,7 @@ function App() {
                 {[
                   { label: 'Total Perangkat', value: stats.total, icon: <Monitor className="w-6 h-6" />, color: 'text-blue-600', bg: 'bg-blue-50', onClick: () => { setDashboardDevicesModalTitle('Daftar Total Perangkat'); setDashboardDevicesModalFilter('all'); setIsDashboardDevicesModalOpen(true); } },
                   { label: 'Kondisi Baik', value: stats.baik, icon: <CheckCircle2 className="w-6 h-6" />, color: 'text-emerald-600', bg: 'bg-emerald-50', onClick: () => { setDashboardDevicesModalTitle('Daftar Perangkat Kondisi Baik'); setDashboardDevicesModalFilter('Baik'); setIsDashboardDevicesModalOpen(true); } },
+                  { label: 'Kurang Baik', value: stats.kurangBaik, icon: <AlertTriangle className="w-6 h-6" />, color: 'text-amber-600', bg: 'bg-amber-50', onClick: () => { setDashboardDevicesModalTitle('Daftar Perangkat Kurang Baik'); setDashboardDevicesModalFilter('Kurang Baik'); setIsDashboardDevicesModalOpen(true); } },
                   { label: 'Rusak / Tidak Baik', value: stats.rusak, icon: <XCircle className="w-6 h-6" />, color: 'text-rose-600', bg: 'bg-rose-50', onClick: () => { setDashboardDevicesModalTitle('Daftar Perangkat Rusak / Tidak Baik'); setDashboardDevicesModalFilter('Rusak'); setIsDashboardDevicesModalOpen(true); } },
                   { label: 'Jenis Layanan', value: stats.layanan, icon: <Layers className="w-6 h-6" />, color: 'text-purple-600', bg: 'bg-purple-50', onClick: () => setIsLayananModalOpen(true) },
                 ].map((stat, i) => (
@@ -2669,7 +2673,7 @@ function App() {
                           <h4 className="text-sm font-black text-slate-900">{d.name}</h4>
                           <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">{d.serviceUnit} • {d.subLocation}</p>
                         </div>
-                        <span className="text-[10px] font-black px-3 py-1.5 rounded-lg uppercase tracking-widest bg-rose-100 text-rose-600">
+                        <span className={`text-[10px] font-black px-3 py-1.5 rounded-lg uppercase tracking-widest ${normalizeCondition(d.condition) === 'Rusak' ? 'bg-rose-100 text-rose-600' : 'bg-amber-100 text-amber-700'}`}>
                           {normalizeCondition(d.condition)}
                         </span>
                       </div>
@@ -2685,6 +2689,7 @@ function App() {
                   <div className="space-y-8">
                     {[
                       { label: 'Baik', value: stats.baik, color: 'bg-emerald-500' },
+                      { label: 'Kurang Baik', value: stats.kurangBaik, color: 'bg-amber-500' },
                       { label: 'Rusak / Tidak Baik', value: stats.rusak, color: 'bg-rose-500' },
                     ].map((item, i) => (
                       <div key={i}>
