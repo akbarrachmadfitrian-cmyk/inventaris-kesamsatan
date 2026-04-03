@@ -1940,6 +1940,9 @@ function App() {
     
     if (dbAvailable) {
       try {
+        const idKey = String(updatedDeviceId || '');
+        const idKeyTrim = idKey.trim();
+
         const doUpdate = async () => {
           await axios.post(
             '/api/admin/devices',
@@ -1964,6 +1967,50 @@ function App() {
           );
         };
 
+        const fetchUpdatedFromDb = async () => {
+          const samsat = String(finalUpdatedData.samsat || finalUpdatedData.location || '').trim();
+          const q = String(finalUpdatedData.serialNumber || idKeyTrim).trim();
+          const res = await axios.get('/api/admin/devices', { params: { samsat, q, limit: 50 }, timeout: 8000 });
+          const items = (res.data?.items || []) as Array<{
+            id: string;
+            samsat: string;
+            name: string;
+            category: string;
+            serviceUnit: string;
+            serialNumber: string;
+            phoneNumber: string;
+            subLocation?: string;
+            condition: string;
+            budgetYear?: string;
+            budgetSource?: string;
+            serviceHistory?: string;
+          }>;
+          const match = items.find(it => String(it.id || '').trim() === idKeyTrim) || items.find(it => String(it.serialNumber || '').trim() === String(finalUpdatedData.serialNumber || '').trim());
+          if (!match) return null;
+          const serial = String(match.serialNumber || '').trim();
+          const phone = String(match.phoneNumber || '').trim();
+          const dataComplete = normalizeFilled(serial) && normalizeFilled(phone);
+          return {
+            id: match.id,
+            name: match.name,
+            category: match.category,
+            location: match.samsat,
+            subLocation: match.subLocation || 'Staff',
+            serialNumber: match.serialNumber,
+            phoneNumber: match.phoneNumber,
+            condition: match.condition,
+            budgetYear: match.budgetYear || '',
+            budgetSource: match.budgetSource || '',
+            serviceHistory: match.serviceHistory || '',
+            photo: selectedDevice.photo,
+            isComplete: !!selectedDevice.photo,
+            dataComplete,
+            samsat: match.samsat,
+            serviceUnit: match.serviceUnit,
+            sheetName: 'DB',
+          } as Device;
+        };
+
         try {
           await doUpdate();
         } catch (e) {
@@ -1982,12 +2029,26 @@ function App() {
           }
         }
 
-        setDevices(prev => prev.map(d => (d.id === updatedDeviceId ? (finalUpdatedData as Device) : d)));
-        setSelectedDevice(finalUpdatedData as Device);
+        let nextDevice: Device = finalUpdatedData as Device;
+        try {
+          const fromDb = await fetchUpdatedFromDb();
+          if (fromDb) {
+            nextDevice = { ...fromDb, photo: nextDevice.photo, isComplete: nextDevice.isComplete };
+            if (String(fromDb.condition || '').trim() !== String(finalUpdatedData.condition || '').trim()) {
+              window.alert(`Perubahan tersimpan, tetapi kondisi di database: "${fromDb.condition}".`);
+            }
+          }
+        } catch {
+          void 0;
+        }
+
+        setDevices(prev => prev.map(d => (String(d.id || '').trim() === idKeyTrim ? nextDevice : d)));
+        setSelectedDevice(nextDevice);
         setIsEditing(false);
         fetchData();
       } catch (e) {
-        setDevices(prev => prev.map(d => (d.id === updatedDeviceId ? (selectedDevice as Device) : d)));
+        const idKeyTrim = String(updatedDeviceId || '').trim();
+        setDevices(prev => prev.map(d => (String(d.id || '').trim() === idKeyTrim ? (selectedDevice as Device) : d)));
         setSelectedDevice(selectedDevice as Device);
         setIsEditing(true);
 
