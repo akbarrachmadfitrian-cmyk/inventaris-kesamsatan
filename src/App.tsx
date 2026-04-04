@@ -2154,9 +2154,11 @@ function App() {
     return Object.keys(samsatGroups).sort((a, b) => a.localeCompare(b));
   }, [samsatGroups]);
 
-  const currentSamsatDevices = useMemo(() => 
-    activeSamsat ? devices.filter(d => d.samsat === activeSamsat) : [], 
-  [devices, activeSamsat]);
+  const currentSamsatDevices = useMemo(() => {
+    const samsatKey = String(activeSamsat || '').trim();
+    if (!samsatKey) return [];
+    return devices.filter(d => String(d.samsat || '').trim() === samsatKey);
+  }, [devices, activeSamsat]);
 
   const stats: Stats = useMemo(() => {
     const total = currentSamsatDevices.length;
