@@ -1711,10 +1711,37 @@ function App() {
     setLoading(true);
     try {
       try {
-        const fetchFromDb = async () => axios.get('/api/public/devices?limit=500', { timeout: 8000 });
-        let res: Awaited<ReturnType<typeof fetchFromDb>>;
+        const fetchAllFromDb = async () => {
+          const limit = 500;
+          const items: Array<{
+            id: string;
+            samsat: string;
+            name: string;
+            category: string;
+            serviceUnit: string;
+            serialNumber: string;
+            phoneNumber: string;
+            subLocation?: string;
+            condition: string;
+            budgetYear?: string;
+            budgetSource?: string;
+            serviceHistory?: string;
+          }> = [];
+
+          for (let page = 0; page < 20; page++) {
+            const offset = page * limit;
+            const res = await axios.get('/api/public/devices', { params: { limit, offset }, timeout: 8000 });
+            const pageItems = (res.data?.items || []) as typeof items;
+            items.push(...pageItems);
+            if (pageItems.length < limit) break;
+          }
+
+          return items;
+        };
+
+        let itemsRaw: Awaited<ReturnType<typeof fetchAllFromDb>>;
         try {
-          res = await fetchFromDb();
+          itemsRaw = await fetchAllFromDb();
         } catch (e) {
           const err = e as unknown;
           if (axios.isAxiosError(err) && err.response?.status === 403) {
@@ -1724,14 +1751,14 @@ function App() {
               localStorage.setItem('admin_api_key', key);
               axios.defaults.headers.common['x-admin-key'] = key;
               delete axios.defaults.headers.common['x-user-key'];
-              res = await fetchFromDb();
+              itemsRaw = await fetchAllFromDb();
             } else if (session?.role === 'user') {
               const key = String(window.prompt('Akses database ditolak. Masukkan User API Key:') || '').trim();
               if (!key) throw err;
               localStorage.setItem('user_api_key', key);
               axios.defaults.headers.common['x-user-key'] = key;
               delete axios.defaults.headers.common['x-admin-key'];
-              res = await fetchFromDb();
+              itemsRaw = await fetchAllFromDb();
             } else {
               throw err;
             }
@@ -1739,7 +1766,8 @@ function App() {
             throw err;
           }
         }
-        const itemsRaw = (res.data?.items || []) as Array<{
+
+        const typedItemsRaw = itemsRaw as Array<{
           id: string;
           samsat: string;
           name: string;
@@ -1755,10 +1783,10 @@ function App() {
         }>;
 
         setDbAvailable(true);
-        setDbNeedsImport(itemsRaw.length === 0);
+        setDbNeedsImport(typedItemsRaw.length === 0);
 
         const savedPhotos = safeParseJSON<Record<string, string>>(localStorage.getItem('samsat_device_photos'), {});
-        const finalDevices: Device[] = itemsRaw.map(d => {
+        const finalDevices: Device[] = typedItemsRaw.map(d => {
           const photo = savedPhotos[d.id];
           const serial = String(d.serialNumber || '').trim();
           const phone = String(d.phoneNumber || '').trim();
