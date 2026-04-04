@@ -597,6 +597,8 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [dbAvailable, setDbAvailable] = useState(false);
   const [dbNeedsImport, setDbNeedsImport] = useState(false);
+  const [samsatIndex, setSamsatIndex] = useState<string[]>([]);
+  const [samsatTotals, setSamsatTotals] = useState<Record<string, number>>({});
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
   
@@ -1786,6 +1788,17 @@ function App() {
         setDbAvailable(true);
         setDbNeedsImport(typedItemsRaw.length === 0);
 
+        try {
+          const idxRes = await axios.get('/api/public/samsat', { timeout: 8000 });
+          const idxItems = (idxRes.data?.items || []) as Array<{ samsat: string; total: number }>;
+          const list = idxItems.map(i => String(i.samsat || '')).filter(Boolean);
+          const totals = Object.fromEntries(idxItems.map(i => [String(i.samsat || ''), Number(i.total || 0)]));
+          setSamsatIndex(list);
+          setSamsatTotals(totals);
+        } catch {
+          void 0;
+        }
+
         const savedPhotos = safeParseJSON<Record<string, string>>(localStorage.getItem('samsat_device_photos'), {});
         const finalDevices: Device[] = typedItemsRaw.map(d => {
           const photo = savedPhotos[d.id];
@@ -2180,8 +2193,9 @@ function App() {
   }, [devices]);
 
   const samsatList = useMemo(() => {
+    if (samsatIndex.length > 0) return samsatIndex;
     return Object.keys(samsatGroups).sort((a, b) => a.localeCompare(b));
-  }, [samsatGroups]);
+  }, [samsatGroups, samsatIndex]);
 
   const currentSamsatDevices = useMemo(() => {
     const samsatKey = String(activeSamsat || '').trim();
@@ -2640,7 +2654,9 @@ function App() {
                         <Building2 className="w-8 h-8" />
                       </div>
                       <h3 className="text-xl font-black text-slate-900 mb-2">{samsat}</h3>
-                      <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mb-6">BAPENDA KALSEL</p>
+                      <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mb-6">
+                        BAPENDA KALSEL • {Number(samsatTotals[samsat] ?? samsatGroups[samsat]?.length ?? 0)} PERANGKAT
+                      </p>
                       <div className="pt-6 border-t border-slate-50 flex items-center justify-center gap-2 text-blue-600 font-black text-sm">
                         <span>Lihat Inventaris</span>
                         <ChevronRight className="w-4 h-4" />
