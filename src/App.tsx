@@ -1728,10 +1728,11 @@ function App() {
             serviceHistory?: string;
           }> = [];
 
-          for (let page = 0; page < 20; page++) {
+          for (let page = 0; page < 2000; page++) {
             const offset = page * limit;
-            const res = await axios.get('/api/public/devices', { params: { limit, offset }, timeout: 8000 });
+            const res = await axios.get('/api/public/devices', { params: { limit, offset }, timeout: 20000 });
             const pageItems = (res.data?.items || []) as typeof items;
+            if (pageItems.length === 0) break;
             items.push(...pageItems);
             if (pageItems.length < limit) break;
           }
