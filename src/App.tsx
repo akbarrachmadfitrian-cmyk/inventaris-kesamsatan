@@ -147,6 +147,151 @@ interface AuthSession {
   loggedInAt: string;
 }
 
+type AdminAccessScope = 'all' | 'restricted';
+
+interface AccountAccess {
+  canSelectSamsat: boolean;
+  canManageLogin: boolean;
+  canAddDevice: boolean;
+  canEditRequests: boolean;
+  allowedSamsat: string[] | null;
+}
+
+const SAMSAT_USER_PASSWORD = 'bapendakalsel2025';
+
+const SAMSAT_USER_ACCOUNTS: Record<string, string> = {
+  samsatbanjarmasin1: 'SAMSAT BANJARMASIN 1',
+  samsatbanjarmasin2: 'SAMSAT BANJARMASIN 2',
+  samsatbanjarbaru: 'SAMSAT BANJARBARU',
+  samsatmartapura: 'SAMSAT MARTAPURA',
+  samsatrantau: 'SAMSAT RANTAU',
+  samsatkandangan: 'SAMSAT KANDANGAN',
+  samsatbarabai: 'SAMSAT BARABAI',
+  samsatamuntai: 'SAMSAT AMUNTAI',
+  samsattanjung: 'SAMSAT TANJUNG',
+  samsatparingin: 'SAMSAT PARINGIN',
+  samsatmarabahan: 'SAMSAT MARABAHAN',
+  samsatpelaihari: 'SAMSAT PELAIHARI',
+  samsatbatulicin: 'SAMSAT BATULICIN',
+  samsatkotabaru: 'SAMSAT KOTABARU',
+};
+
+const SUB_ADMIN_ACCOUNTS: Record<
+  string,
+  { password: string; scope: AdminAccessScope; allowedSamsat?: string[]; hideManageLogin?: boolean; hideAddDevice?: boolean; requestsReadOnly?: boolean }
+> = {
+  admininfra: { password: 'infrastruktur2025', scope: 'all', hideManageLogin: true, hideAddDevice: true, requestsReadOnly: true },
+  adminagung: {
+    password: 'agunginfra',
+    scope: 'restricted',
+    allowedSamsat: ['SAMSAT BANJARMASIN 1', 'SAMSAT MARABAHAN', 'SAMSAT PARINGIN', 'SAMSAT KOTABARU'],
+    hideManageLogin: true,
+  },
+  adminfajrin: {
+    password: 'fajrininfra',
+    scope: 'restricted',
+    allowedSamsat: ['SAMSAT BANJARBARU', 'SAMSAT PELAIHARI', 'SAMSAT BATULICIN', 'SAMSAT KANDANGAN'],
+    hideManageLogin: true,
+  },
+  adminakbar: {
+    password: 'akbarinfra',
+    scope: 'restricted',
+    allowedSamsat: ['SAMSAT MARTAPURA', 'SAMSAT BARABAI', 'SAMSAT AMUNTAI'],
+    hideManageLogin: true,
+  },
+  adminkurnia: {
+    password: 'kurniainfra',
+    scope: 'restricted',
+    allowedSamsat: ['SAMSAT BANJARMASIN 2', 'SAMSAT RANTAU', 'SAMSAT TANJUNG'],
+    hideManageLogin: true,
+  },
+};
+
+const getAccountAccess = (session: AuthSession | null): AccountAccess => {
+  if (!session) {
+    return {
+      canSelectSamsat: true,
+      canManageLogin: false,
+      canAddDevice: false,
+      canEditRequests: false,
+      allowedSamsat: null,
+    };
+  }
+
+  const username = String(session.username || '').trim().toLowerCase();
+
+  if (session.role === 'admin') {
+    if (username === 'admin') {
+      return {
+        canSelectSamsat: true,
+        canManageLogin: true,
+        canAddDevice: true,
+        canEditRequests: true,
+        allowedSamsat: null,
+      };
+    }
+
+    const sub = SUB_ADMIN_ACCOUNTS[username];
+    if (sub) {
+      const allowedSamsat = sub.scope === 'restricted' ? sub.allowedSamsat || [] : null;
+      return {
+        canSelectSamsat: sub.scope === 'restricted' ? true : true,
+        canManageLogin: !sub.hideManageLogin,
+        canAddDevice: !sub.hideAddDevice,
+        canEditRequests: !sub.requestsReadOnly,
+        allowedSamsat,
+      };
+    }
+
+    return {
+      canSelectSamsat: true,
+      canManageLogin: false,
+      canAddDevice: false,
+      canEditRequests: false,
+      allowedSamsat: null,
+    };
+  }
+
+  if (session.role === 'user') {
+    if (username === 'user') {
+      return {
+        canSelectSamsat: true,
+        canManageLogin: false,
+        canAddDevice: false,
+        canEditRequests: false,
+        allowedSamsat: null,
+      };
+    }
+
+    const samsat = SAMSAT_USER_ACCOUNTS[username];
+    if (samsat) {
+      return {
+        canSelectSamsat: false,
+        canManageLogin: false,
+        canAddDevice: false,
+        canEditRequests: false,
+        allowedSamsat: [samsat],
+      };
+    }
+
+    return {
+      canSelectSamsat: false,
+      canManageLogin: false,
+      canAddDevice: false,
+      canEditRequests: false,
+      allowedSamsat: null,
+    };
+  }
+
+  return {
+    canSelectSamsat: true,
+    canManageLogin: false,
+    canAddDevice: false,
+    canEditRequests: false,
+    allowedSamsat: null,
+  };
+};
+
 const LS_AUTH_CREDENTIALS = 'samsat_auth_credentials';
 const LS_AUTH_SESSION = 'samsat_auth_session';
 
@@ -703,6 +848,7 @@ function App() {
   });
 
   const isAdmin = session?.role === 'admin';
+  const accountAccess = useMemo(() => getAccountAccess(session), [session]);
   const strictSheetSync = false;
 
   useEffect(() => {
@@ -720,18 +866,41 @@ function App() {
     }
   }, [session]);
 
+  useEffect(() => {
+    if (!session) return;
+    const access = getAccountAccess(session);
+    if (!access.allowedSamsat || access.allowedSamsat.length === 0) return;
+    const allowed = access.allowedSamsat;
+    const current = String(activeSamsat || '').trim();
+    const ok = current && allowed.some(s => String(s).trim() === current);
+    if (!ok) {
+      setActiveSamsat(allowed[0]);
+      setViewMode('dashboard');
+      setShowSamsatDropdown(false);
+    }
+  }, [session, activeSamsat]);
+
   const handleLogin = (role: AuthRole) => {
     const creds = getAuthCredentials();
-    const expectedPassword = role === 'admin' ? creds.adminPassword : creds.userPassword;
-    const expectedUsername = role === 'admin' ? 'admin' : 'user';
     const enteredUsername = authUsername.trim();
+    const enteredUsernameLower = enteredUsername.toLowerCase();
 
-    if (enteredUsername !== expectedUsername || authPassword !== expectedPassword) {
+    let expectedPassword: string | null = null;
+
+    if (role === 'admin') {
+      if (enteredUsernameLower === 'admin') expectedPassword = creds.adminPassword;
+      else if (enteredUsernameLower in SUB_ADMIN_ACCOUNTS) expectedPassword = SUB_ADMIN_ACCOUNTS[enteredUsernameLower].password;
+    } else {
+      if (enteredUsernameLower === 'user') expectedPassword = creds.userPassword;
+      else if (enteredUsernameLower in SAMSAT_USER_ACCOUNTS) expectedPassword = SAMSAT_USER_PASSWORD;
+    }
+
+    if (!expectedPassword || authPassword !== expectedPassword) {
       setAuthError('User atau password salah');
       return;
     }
 
-    const nextSession: AuthSession = { role, username: expectedUsername, loggedInAt: new Date().toISOString() };
+    const nextSession: AuthSession = { role, username: enteredUsernameLower, loggedInAt: new Date().toISOString() };
     setSession(nextSession);
     saveAuthSession(nextSession);
     if (role === 'admin') {
@@ -760,8 +929,14 @@ function App() {
     setAuthError(null);
     setSelectedDevice(null);
     setIsEditing(false);
-    setViewMode('selection');
-    setActiveSamsat(null);
+    const access = getAccountAccess(nextSession);
+    if (access.allowedSamsat && access.allowedSamsat.length === 1) {
+      setViewMode('dashboard');
+      setActiveSamsat(access.allowedSamsat[0]);
+    } else {
+      setViewMode('selection');
+      setActiveSamsat(null);
+    }
     setShowSamsatDropdown(false);
     setIsRequestModalOpen(false);
     setRequestDraft(null);
@@ -1432,6 +1607,7 @@ function App() {
   const openRequestEditor = async (requestId: string) => {
     if (strictSheetSync) return;
     if (!isAdmin) return;
+    if (!accountAccess.canEditRequests) return;
     if (!activeSamsat) return;
     let req: DeviceRequest | null = null;
     if (dbAvailable) {
@@ -1450,6 +1626,7 @@ function App() {
   const openAddDeviceModal = async () => {
     if (strictSheetSync) return;
     if (!isAdmin) return;
+    if (!accountAccess.canAddDevice) return;
     if (!activeSamsat) return;
     setNewDeviceDraft({ condition: 'Baik', samsat: activeSamsat, budgetSource: 'APBD' });
     setIsAddDeviceModalOpen(true);
@@ -1495,6 +1672,7 @@ function App() {
   const createNewRequestFromHub = async () => {
     if (strictSheetSync) return;
     if (!isAdmin) return;
+    if (!accountAccess.canEditRequests) return;
     if (!activeSamsat) return;
     setRequestHistoryLoading(true);
     try {
@@ -1517,6 +1695,7 @@ function App() {
 
   const deleteRequestFromHub = async (req: DeviceRequest) => {
     if (!isAdmin) return;
+    if (!accountAccess.canEditRequests) return;
     const ok = window.confirm('apakah anda yakin ingin menghapus history permintaan ini?');
     if (!ok) return;
     try {
@@ -1713,7 +1892,8 @@ function App() {
     setLoading(true);
     try {
       try {
-        const fetchAllFromDb = async () => {
+        const access = getAccountAccess(session);
+        const fetchPagesFromDb = async (samsat?: string) => {
           const limit = 500;
           const items: Array<{
             id: string;
@@ -1732,7 +1912,7 @@ function App() {
 
           for (let page = 0; page < 2000; page++) {
             const offset = page * limit;
-            const res = await axios.get('/api/public/devices', { params: { limit, offset }, timeout: 20000 });
+            const res = await axios.get('/api/public/devices', { params: { limit, offset, ...(samsat ? { samsat } : {}) }, timeout: 20000 });
             const pageItems = (res.data?.items || []) as typeof items;
             if (pageItems.length === 0) break;
             items.push(...pageItems);
@@ -1740,6 +1920,18 @@ function App() {
           }
 
           return items;
+        };
+
+        const fetchAllFromDb = async () => {
+          if (access.allowedSamsat && access.allowedSamsat.length > 0) {
+            const all: Awaited<ReturnType<typeof fetchPagesFromDb>> = [];
+            for (const s of access.allowedSamsat) {
+              const chunk = await fetchPagesFromDb(s);
+              all.push(...chunk);
+            }
+            return all;
+          }
+          return fetchPagesFromDb();
         };
 
         let itemsRaw: Awaited<ReturnType<typeof fetchAllFromDb>>;
@@ -1791,8 +1983,12 @@ function App() {
         try {
           const idxRes = await axios.get('/api/public/samsat', { timeout: 8000 });
           const idxItems = (idxRes.data?.items || []) as Array<{ samsat: string; total: number }>;
-          const list = idxItems.map(i => String(i.samsat || '')).filter(Boolean);
-          const totals = Object.fromEntries(idxItems.map(i => [String(i.samsat || ''), Number(i.total || 0)]));
+          const filtered =
+            access.allowedSamsat && access.allowedSamsat.length > 0
+              ? idxItems.filter(i => access.allowedSamsat?.includes(String(i.samsat || '')))
+              : idxItems;
+          const list = filtered.map(i => String(i.samsat || '')).filter(Boolean);
+          const totals = Object.fromEntries(filtered.map(i => [String(i.samsat || ''), Number(i.total || 0)]));
           setSamsatIndex(list);
           setSamsatTotals(totals);
         } catch {
@@ -2197,6 +2393,13 @@ function App() {
     return Object.keys(samsatGroups).sort((a, b) => a.localeCompare(b));
   }, [samsatGroups, samsatIndex]);
 
+  const visibleSamsatList = useMemo(() => {
+    const access = getAccountAccess(session);
+    if (!access.allowedSamsat) return samsatList;
+    const allowed = new Set(access.allowedSamsat.map(s => String(s).trim()));
+    return samsatList.filter(s => allowed.has(String(s).trim()));
+  }, [samsatList, session]);
+
   const currentSamsatDevices = useMemo(() => {
     const samsatKey = String(activeSamsat || '').trim();
     if (!samsatKey) return [];
@@ -2451,7 +2654,7 @@ function App() {
           </div>
         </div>
 
-        {activeSamsat && (
+        {activeSamsat && accountAccess.canSelectSamsat && (
           <div className="px-4 py-6">
             <div className="relative">
               <button 
@@ -2478,7 +2681,7 @@ function App() {
                     exit={{ opacity: 0, y: -10 }}
                     className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden z-50"
                   >
-                    {samsatList.map(s => (
+                    {visibleSamsatList.map(s => (
                       <button 
                         key={s}
                         onClick={() => { setActiveSamsat(s); setShowSamsatDropdown(false); setViewMode('dashboard'); }}
@@ -2569,7 +2772,7 @@ function App() {
                   <span>Scan QR</span>
                 </button>
               )}
-              {isAdmin && !strictSheetSync && (
+              {isAdmin && accountAccess.canAddDevice && !strictSheetSync && (
                 <button
                   onClick={openAddDeviceModal}
                   className="w-full flex items-center gap-3 p-3 rounded-xl font-bold text-sm transition-all text-slate-500 hover:bg-slate-50"
@@ -2578,7 +2781,7 @@ function App() {
                   <span>Tambah Perangkat</span>
                 </button>
               )}
-              {isAdmin && (
+              {isAdmin && accountAccess.canManageLogin && (
                 <button
                   onClick={() => { setIsManageLoginOpen(true); setManageLoginError(null); setManageLoginSuccess(null); }}
                   className="w-full flex items-center gap-3 p-3 rounded-xl font-bold text-sm transition-all text-slate-500 hover:bg-slate-50"
@@ -2639,9 +2842,9 @@ function App() {
                   </button>
                 </div>
               ) : null}
-              {samsatList.length > 0 ? (
+              {visibleSamsatList.length > 0 ? (
                 <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-                  {samsatList.map((samsat, i) => (
+                  {visibleSamsatList.map((samsat, i) => (
                     <motion.div
                       key={samsat}
                       initial={{ opacity: 0, y: 20 }}
@@ -3139,7 +3342,7 @@ function App() {
                 </button>
               </div>
               <div className="p-8 overflow-y-auto flex-grow">
-                {isAdmin ? (
+                {isAdmin && accountAccess.canEditRequests ? (
                   <button
                     onClick={createNewRequestFromHub}
                     disabled={requestHistoryLoading}
@@ -3172,7 +3375,9 @@ function App() {
                         return (
                           <div key={r.requestId || r.createdAt} className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-slate-50 transition-colors">
                             <button
-                              onClick={() => (isAdmin ? openRequestEditor(r.requestId) : openRequestStatusModal(r.requestId))}
+                              onClick={() =>
+                                isAdmin ? (accountAccess.canEditRequests ? openRequestEditor(r.requestId) : openRequestStatusModal(r.requestId)) : openRequestStatusModal(r.requestId)
+                              }
                               className="text-left flex-grow min-w-0"
                             >
                               <p className="font-black text-slate-900 truncate">{r.requestType}</p>
@@ -3193,7 +3398,7 @@ function App() {
                               >
                                 {inputOk ? 'Selesai' : 'Proses'}
                               </span>
-                              {isAdmin ? (
+                              {isAdmin && accountAccess.canEditRequests ? (
                                 <>
                                   <button
                                     onClick={() => openRequestEditor(r.requestId)}
