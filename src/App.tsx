@@ -852,6 +852,16 @@ function App() {
   const accountAccess = useMemo(() => getAccountAccess(session), [session]);
   const strictSheetSync = false;
 
+  const deviceModalClosingRef = useRef(false);
+  const closeDeviceModal = useCallback(() => {
+    deviceModalClosingRef.current = true;
+    setIsEditing(false);
+    setSelectedDevice(null);
+    window.setTimeout(() => {
+      deviceModalClosingRef.current = false;
+    }, 250);
+  }, []);
+
   useEffect(() => {
     if (session?.role === 'admin') {
       const key = String(localStorage.getItem('admin_api_key') || '').trim();
@@ -3239,7 +3249,10 @@ function App() {
                 {filteredDevices.map((d) => (
                   <motion.div 
                     key={d.id}
-                    onClick={() => setSelectedDevice(d)}
+                    onClick={() => {
+                      if (deviceModalClosingRef.current) return;
+                      setSelectedDevice(d);
+                    }}
                     className="bg-white border border-slate-100 rounded-3xl p-6 shadow-sm hover:shadow-md transition-all cursor-pointer group"
                   >
                     <div className="flex justify-between items-start mb-6">
@@ -3248,7 +3261,12 @@ function App() {
                       </div>
                       <div className="flex items-center gap-2">
                         <button
-                          onClick={(e) => { e.stopPropagation(); setSelectedDevice(d); setIsEditing(false); }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (deviceModalClosingRef.current) return;
+                            setSelectedDevice(d);
+                            setIsEditing(false);
+                          }}
                           className="px-3 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-black transition-colors"
                         >
                           Detail
@@ -3287,8 +3305,7 @@ function App() {
             className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm"
             onClick={(e) => {
               if (e.target !== e.currentTarget) return;
-              setIsEditing(false);
-              setSelectedDevice(null);
+              closeDeviceModal();
             }}
           >
             <motion.div
@@ -3300,9 +3317,15 @@ function App() {
             >
               <button
                 type="button"
-                onClick={() => {
-                  setIsEditing(false);
-                  setSelectedDevice(null);
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  closeDeviceModal();
+                }}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  closeDeviceModal();
                 }}
                 className="absolute top-8 right-8 p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl z-[60] cursor-pointer"
                 aria-label="Tutup"
@@ -3525,7 +3548,12 @@ function App() {
                     {dashboardFilteredDevices.map((d) => (
                       <button
                         key={d.id}
-                        onClick={() => { setIsDashboardDevicesModalOpen(false); setSelectedDevice(d); setIsEditing(false); }}
+                        onClick={() => {
+                          setIsDashboardDevicesModalOpen(false);
+                          if (deviceModalClosingRef.current) return;
+                          setSelectedDevice(d);
+                          setIsEditing(false);
+                        }}
                         className="w-full text-left p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-slate-50 transition-colors"
                       >
                         <div>
