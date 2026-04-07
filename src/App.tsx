@@ -2077,6 +2077,8 @@ function App() {
   useEffect(() => {
     if (!selectedDevice) return;
     if (isEditing) return;
+    // Guard: jangan re-set selectedDevice jika baru saja ditutup
+    if (Date.now() - lastModalCloseRef.current < 600) return;
     const next = devices.find(d => d.id === selectedDevice.id);
     if (!next) return;
     setSelectedDevice(prev => {

@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback } from 'react';
+import React, { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { motion } from 'framer-motion';
 import { Camera, Upload, AlertTriangle, XCircle, Printer, CheckCircle2, Pencil, Trash2 } from 'lucide-react';
@@ -61,48 +61,39 @@ export function DeviceDetailModal({
     return () => document.removeEventListener('keydown', onKey, true);
   }, [selectedDevice, handleCloseDeviceModal]);
 
-  // Fungsi close yang aman — pakai requestAnimationFrame untuk 
-  // memastikan event selesai sebelum portal dihapus
-  const safeClose = useCallback((e?: React.MouseEvent | React.PointerEvent) => {
-    if (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      e.nativeEvent?.stopImmediatePropagation?.();
-    }
-    // Delay 1 frame agar event saat ini selesai, mencegah ghost click
-    requestAnimationFrame(() => {
-      handleCloseDeviceModal();
-    });
-  }, [handleCloseDeviceModal]);
-
   if (typeof document === 'undefined' || !selectedDevice) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-50" style={{ isolation: 'isolate' }}>
+    <div className="fixed inset-0 z-50">
       {/* Backdrop — klik untuk tutup */}
       <div
         className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
-        onMouseDown={(e) => safeClose(e)}
+        onClick={() => handleCloseDeviceModal()}
       />
 
-      {/* Content layer */}
-      <div className="absolute inset-0 flex items-center justify-center p-4 pointer-events-none">
-        {/* Tombol X */}
-        <button
-          type="button"
-          onMouseDown={(e) => safeClose(e)}
-          className="absolute top-4 right-4 w-16 h-16 flex items-center justify-center bg-white/90 border border-slate-200 hover:bg-white rounded-2xl z-[9999] cursor-pointer shadow-lg pointer-events-auto"
-          aria-label="Tutup"
-        >
-          <XCircle className="w-7 h-7 text-slate-600" />
-        </button>
-
-        {/* Modal card */}
+      {/* Modal centered */}
+      <div className="absolute inset-0 flex items-center justify-center p-4" style={{ pointerEvents: 'none' }}>
         <motion.div
           initial={{ opacity: 0, scale: 0.98 }}
           animate={{ opacity: 1, scale: 1 }}
-          className="bg-white rounded-[3rem] w-full max-w-4xl overflow-hidden shadow-2xl relative transform-gpu pointer-events-auto"
+          className="bg-white rounded-[3rem] w-full max-w-4xl overflow-hidden shadow-2xl relative"
+          style={{ pointerEvents: 'auto' }}
+          onClick={(e) => e.stopPropagation()}
         >
+          {/* Tombol X — di dalam card, selalu di atas semua konten */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              handleCloseDeviceModal();
+            }}
+            className="absolute top-6 right-6 w-12 h-12 flex items-center justify-center bg-slate-100 hover:bg-slate-200 rounded-2xl z-[100] cursor-pointer transition-colors"
+            aria-label="Tutup"
+          >
+            <XCircle className="w-6 h-6 text-slate-500" />
+          </button>
+
           <div className="flex flex-col lg:flex-row">
             <div className="w-full lg:w-1/2 bg-slate-50 relative min-h-[400px]">
               {(() => {
