@@ -3285,7 +3285,7 @@ function App() {
         {selectedDevice && (
           <div
             className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm"
-            onPointerDown={(e) => {
+            onClick={(e) => {
               if (e.target !== e.currentTarget) return;
               setIsEditing(false);
               setSelectedDevice(null);
@@ -3296,16 +3296,16 @@ function App() {
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
               className="bg-white rounded-[3rem] w-full max-w-4xl overflow-hidden shadow-2xl relative"
-              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
             >
               <button
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
+                type="button"
+                onClick={() => {
                   setIsEditing(false);
                   setSelectedDevice(null);
                 }}
-                className="absolute top-8 right-8 p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl z-20"
+                className="absolute top-8 right-8 p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl z-[60] cursor-pointer"
+                aria-label="Tutup"
               >
                 <XCircle className="w-6 h-6 text-slate-400" />
               </button>
