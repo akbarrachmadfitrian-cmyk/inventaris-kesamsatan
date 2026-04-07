@@ -2144,24 +2144,15 @@ function App() {
     modalImageFetchAbortRef.current = controller;
     void (async () => {
       try {
-        const run = async () => {
-          const blob = await (await fetch(src, { signal: controller.signal })).blob();
-          const url = URL.createObjectURL(blob);
-          if (cancelled) {
-            URL.revokeObjectURL(url);
-            return;
-          }
-          if (modalImageObjectUrlRef.current) URL.revokeObjectURL(modalImageObjectUrlRef.current);
-          modalImageObjectUrlRef.current = url;
-          setModalImageUrl(url);
-          setModalImageTooLarge(false);
-        };
-
-        const g = globalThis as unknown as { requestIdleCallback?: (cb: () => void) => void };
-        if (typeof g.requestIdleCallback === 'function') g.requestIdleCallback(() => void run());
-        else setTimeout(() => void run(), 0);
+        const blob = await (await fetch(src, { signal: controller.signal })).blob();
+        if (cancelled) return;
+        const url = URL.createObjectURL(blob);
+        if (modalImageObjectUrlRef.current) URL.revokeObjectURL(modalImageObjectUrlRef.current);
+        modalImageObjectUrlRef.current = url;
+        setModalImageUrl(url);
+        setModalImageTooLarge(false);
       } catch {
-        setModalImageUrl(null);
+        if (!cancelled) setModalImageUrl(null);
       }
     })();
 

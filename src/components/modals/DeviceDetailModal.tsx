@@ -129,9 +129,15 @@ export function DeviceDetailModal({
                 }
                 if (hasPhoto) {
                   return (
-                    <div className="w-full h-full flex flex-col items-center justify-center text-slate-300 p-12">
-                      <Camera className="w-20 h-20 mb-6 opacity-20" />
-                      <p className="text-sm font-bold">Memuat Foto...</p>
+                    <div className="w-full h-full flex flex-col items-center justify-center text-slate-400 p-12">
+                      <div className="relative mb-6">
+                        <Camera className="w-16 h-16 opacity-20" />
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <div className="w-20 h-20 border-4 border-slate-200 border-t-blue-500 rounded-full animate-spin" />
+                        </div>
+                      </div>
+                      <p className="text-sm font-black text-slate-500">Memuat Foto...</p>
+                      <p className="text-xs font-bold text-slate-400 mt-1">Mengunduh dari database</p>
                     </div>
                   );
                 }
