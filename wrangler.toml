@@ -2,3 +2,7 @@ name = "inventaris-kesamsatan"
 compatibility_date = "2026-04-07"
 pages_build_output_dir = "dist"
 
+[[d1_databases]]
+binding = "DB"
+database_name = "REPLACE_ME"
+database_id = "REPLACE_ME"
