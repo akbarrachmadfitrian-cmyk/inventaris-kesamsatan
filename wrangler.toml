@@ -4,5 +4,5 @@ pages_build_output_dir = "dist"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "REPLACE_ME"
-database_id = "REPLACE_ME"
+database_name = "inventaris_kesamsatan"
+database_id = "86f638a8-0f2a-4835-ac14-ca36f401ade5"
