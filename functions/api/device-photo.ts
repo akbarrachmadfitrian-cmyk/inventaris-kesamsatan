@@ -34,6 +34,8 @@ interface Env {
   PHOTOS?: R2Bucket
 }
 
+let devicesHasPhotoDataUrlColumnCache: boolean | null = null
+
 const json = (data: unknown, init?: ResponseInit) =>
   new Response(JSON.stringify(data), {
     ...init,
@@ -44,6 +46,19 @@ const json = (data: unknown, init?: ResponseInit) =>
   })
 
 const nowIso = () => new Date().toISOString()
+
+const hasPhotoDataUrlColumn = async (db: D1Database) => {
+  if (devicesHasPhotoDataUrlColumnCache !== null) return devicesHasPhotoDataUrlColumnCache
+  try {
+    const res = await db.prepare("PRAGMA table_info('devices')").all<Record<string, unknown>>()
+    const names = new Set(res.results.map(r => String(r.name || '').toLowerCase()))
+    devicesHasPhotoDataUrlColumnCache = names.has('photo_data_url')
+    return devicesHasPhotoDataUrlColumnCache
+  } catch {
+    devicesHasPhotoDataUrlColumnCache = false
+    return false
+  }
+}
 
 const extFromMime = (mime: string) => {
   const m = (mime || '').toLowerCase()
@@ -56,38 +71,64 @@ const extFromMime = (mime: string) => {
 
 const sanitizeId = (raw: string) => String(raw || '').trim().replace(/[^\w.-]/g, '_')
 
+const parseDataUrl = (dataUrl: string) => {
+  const s = String(dataUrl || '')
+  const m = s.match(/^data:([^;]+);base64,(.+)$/)
+  if (!m) return null
+  const mime = m[1]
+  const b64 = m[2]
+  return { mime, b64 }
+}
+
+const base64ToUint8Array = (b64: string) => {
+  const binary = atob(b64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return bytes
+}
+
 export async function onRequestGet({ request, env }: { request: Request; env: Env }) {
   if (!env.DB) return json({ error: 'DB belum dikonfigurasi' }, { status: 500 })
-  if (!env.PHOTOS) return json({ error: 'PHOTOS bucket belum dikonfigurasi' }, { status: 500 })
 
   const url = new URL(request.url)
   const deviceId = String(url.searchParams.get('deviceId') || '').trim()
   if (!deviceId) return json({ error: 'deviceId wajib diisi' }, { status: 400 })
 
+  const withPhotoDataUrl = await hasPhotoDataUrlColumn(env.DB)
   const row = await env.DB
-    .prepare('SELECT photo_r2_key FROM devices WHERE id = ? AND deleted_at IS NULL')
+    .prepare(withPhotoDataUrl ? 'SELECT photo_r2_key, photo_data_url FROM devices WHERE id = ? AND deleted_at IS NULL' : 'SELECT photo_r2_key FROM devices WHERE id = ? AND deleted_at IS NULL')
     .bind(deviceId)
     .first<Record<string, unknown>>()
 
   const key = row?.photo_r2_key ? String(row.photo_r2_key) : ''
-  if (!key) return json({ error: 'foto tidak ditemukan' }, { status: 404 })
+  const dataUrl = row?.photo_data_url ? String(row.photo_data_url) : ''
 
-  const obj = await env.PHOTOS.get(key)
-  if (!obj) return json({ error: 'foto tidak ditemukan' }, { status: 404 })
+  if (key && env.PHOTOS) {
+    const obj = await env.PHOTOS.get(key)
+    if (!obj) return json({ error: 'foto tidak ditemukan' }, { status: 404 })
 
-  const headers = new Headers()
-  obj.writeHttpMetadata(headers)
-  if (!headers.get('content-type')) {
-    headers.set('content-type', obj.httpMetadata?.contentType || 'application/octet-stream')
+    const headers = new Headers()
+    obj.writeHttpMetadata(headers)
+    if (!headers.get('content-type')) {
+      headers.set('content-type', obj.httpMetadata?.contentType || 'application/octet-stream')
+    }
+    headers.set('cache-control', 'private, no-store')
+
+    return new Response(obj.body, { status: 200, headers })
   }
-  headers.set('cache-control', 'private, no-store')
 
-  return new Response(obj.body, { status: 200, headers })
+  if (dataUrl) {
+    const parsed = parseDataUrl(dataUrl)
+    if (!parsed) return json({ error: 'foto tidak valid' }, { status: 500 })
+    const bytes = base64ToUint8Array(parsed.b64)
+    return new Response(bytes, { status: 200, headers: { 'content-type': parsed.mime, 'cache-control': 'private, no-store' } })
+  }
+
+  return json({ error: 'foto tidak ditemukan' }, { status: 404 })
 }
 
 export async function onRequestPost({ request, env }: { request: Request; env: Env }) {
   if (!env.DB) return json({ error: 'DB belum dikonfigurasi' }, { status: 500 })
-  if (!env.PHOTOS) return json({ error: 'PHOTOS bucket belum dikonfigurasi' }, { status: 500 })
 
   const contentType = String(request.headers.get('content-type') || '')
 
@@ -116,22 +157,31 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
   const id = String(deviceId || '').trim()
   if (!id) return json({ error: 'deviceId wajib diisi' }, { status: 400 })
 
+  const withPhotoDataUrl = await hasPhotoDataUrlColumn(env.DB)
   const existing = await env.DB
-    .prepare('SELECT id, photo_r2_key FROM devices WHERE id = ? AND deleted_at IS NULL')
+    .prepare(withPhotoDataUrl ? 'SELECT id, photo_r2_key, photo_data_url FROM devices WHERE id = ? AND deleted_at IS NULL' : 'SELECT id, photo_r2_key FROM devices WHERE id = ? AND deleted_at IS NULL')
     .bind(id)
     .first<Record<string, unknown>>()
 
   if (!existing?.id) return json({ error: 'perangkat tidak ditemukan' }, { status: 404 })
 
   const prevKey = existing.photo_r2_key ? String(existing.photo_r2_key) : ''
+  const prevDataUrl = existing.photo_data_url ? String(existing.photo_data_url) : ''
 
   if (action === 'delete') {
-    if (prevKey) await env.PHOTOS.delete(prevKey)
+    if (prevKey && env.PHOTOS) await env.PHOTOS.delete(prevKey)
     const now = nowIso()
-    await env.DB
-      .prepare('UPDATE devices SET photo_r2_key = NULL, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL')
-      .bind(now, 'photo', id)
-      .run()
+    if (withPhotoDataUrl) {
+      await env.DB
+        .prepare('UPDATE devices SET photo_r2_key = NULL, photo_data_url = NULL, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL')
+        .bind(now, 'photo', id)
+        .run()
+    } else {
+      await env.DB
+        .prepare('UPDATE devices SET photo_r2_key = NULL, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL')
+        .bind(now, 'photo', id)
+        .run()
+    }
     return json({ ok: true }, { status: 200 })
   }
 
@@ -143,18 +193,46 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
 
   const mime = String(file.type || 'application/octet-stream')
   const ext = extFromMime(mime)
-  const key = `devices/${sanitizeId(id)}/${Date.now()}.${ext}`
 
   const buf = await file.arrayBuffer()
-  await env.PHOTOS.put(key, buf, { httpMetadata: { contentType: mime } })
-  if (prevKey) await env.PHOTOS.delete(prevKey)
-
   const now = nowIso()
+  if (env.PHOTOS) {
+    const key = `devices/${sanitizeId(id)}/${Date.now()}.${ext}`
+    await env.PHOTOS.put(key, buf, { httpMetadata: { contentType: mime } })
+    if (prevKey) await env.PHOTOS.delete(prevKey)
+    if (withPhotoDataUrl && prevDataUrl) {
+      await env.DB
+        .prepare('UPDATE devices SET photo_data_url = NULL WHERE id = ? AND deleted_at IS NULL')
+        .bind(id)
+        .run()
+    }
+    await env.DB
+      .prepare('UPDATE devices SET photo_r2_key = ?, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL')
+      .bind(key, now, 'photo', id)
+      .run()
+    return json({ ok: true, photoR2Key: key }, { status: 200 })
+  }
+
+  if (!withPhotoDataUrl) {
+    return json(
+      { error: 'PHOTOS bucket belum dikonfigurasi, dan kolom devices.photo_data_url belum tersedia. Jalankan migration 0007_add_device_photo_data_url.sql.' },
+      { status: 500 }
+    )
+  }
+
+  const bytes = new Uint8Array(buf)
+  let b64 = ''
+  const chunkSize = 0x8000
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize)
+    b64 += String.fromCharCode(...chunk)
+  }
+  const dataUrl = `data:${mime};base64,${btoa(b64)}`
+
   await env.DB
-    .prepare('UPDATE devices SET photo_r2_key = ?, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL')
-    .bind(key, now, 'photo', id)
+    .prepare('UPDATE devices SET photo_r2_key = NULL, photo_data_url = ?, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL')
+    .bind(dataUrl, now, 'photo', id)
     .run()
 
-  return json({ ok: true, photoR2Key: key }, { status: 200 })
+  return json({ ok: true, photoR2Key: 'd1' }, { status: 200 })
 }
-

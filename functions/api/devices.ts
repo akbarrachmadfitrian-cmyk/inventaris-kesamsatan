@@ -40,6 +40,7 @@ interface Env {
 }
 
 let devicesHasBudgetColumnsCache: boolean | null = null
+let devicesHasPhotoDataUrlColumnCache: boolean | null = null
 
 const json = (data: unknown, init?: ResponseInit) =>
   new Response(JSON.stringify(data), {
@@ -241,7 +242,22 @@ const hasBudgetColumns = async (db: D1Database) => {
   }
 }
 
+const hasPhotoDataUrlColumn = async (db: D1Database) => {
+  if (devicesHasPhotoDataUrlColumnCache !== null) return devicesHasPhotoDataUrlColumnCache
+  try {
+    const res = await db.prepare("PRAGMA table_info('devices')").all<Record<string, unknown>>()
+    const names = new Set(res.results.map(r => String(r.name || '').toLowerCase()))
+    devicesHasPhotoDataUrlColumnCache = names.has('photo_data_url')
+    return devicesHasPhotoDataUrlColumnCache
+  } catch {
+    devicesHasPhotoDataUrlColumnCache = false
+    return false
+  }
+}
+
 const mapDeviceRow = (row: Record<string, unknown>): DeviceRow => {
+  const r2Key = row.photo_r2_key ? String(row.photo_r2_key) : null
+  const hasPhoto = Boolean(Number(row.has_photo || 0))
   return {
     id: String(row.id || ''),
     samsat: String(row.samsat || row.samsat_id || ''),
@@ -255,7 +271,7 @@ const mapDeviceRow = (row: Record<string, unknown>): DeviceRow => {
     budgetYear: String(row.budget_year || row.budgetYear || ''),
     budgetSource: String(row.budget_source || row.budgetSource || ''),
     serviceHistory: String(row.service_history || row.serviceHistory || ''),
-    photoR2Key: row.photo_r2_key ? String(row.photo_r2_key) : null,
+    photoR2Key: r2Key || (hasPhoto ? 'd1' : null),
     createdAt: String(row.created_at || ''),
     updatedAt: String(row.updated_at || ''),
     updatedBy: row.updated_by ? String(row.updated_by) : null,
@@ -287,10 +303,15 @@ export async function onRequestGet({ request, env }: { request: Request; env: En
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''
   const withBudget = await hasBudgetColumns(env.DB)
   const budgetSelect = withBudget ? 'd.budget_year, d.budget_source, d.service_history,' : ''
+  const withPhotoDataUrl = await hasPhotoDataUrlColumn(env.DB)
+  const hasPhotoExpr = withPhotoDataUrl
+    ? 'CASE WHEN d.photo_r2_key IS NOT NULL OR d.photo_data_url IS NOT NULL THEN 1 ELSE 0 END AS has_photo,'
+    : 'CASE WHEN d.photo_r2_key IS NOT NULL THEN 1 ELSE 0 END AS has_photo,'
   const sql = `
     SELECT
       d.id, d.name, d.category, d.service_unit, d.serial_number, d.phone_number, d.holder_name, d.condition,
       ${budgetSelect}
+      ${hasPhotoExpr}
       d.photo_r2_key, d.created_at, d.updated_at, d.updated_by,
       s.name AS samsat
     FROM devices d
