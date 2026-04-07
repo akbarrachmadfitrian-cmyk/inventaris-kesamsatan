@@ -901,9 +901,9 @@ function App() {
     console.log('[device-modal] close', selectedDevice.id);
     setIsEditing(false);
     setIsClosing(true);
+    setSelectedDevice(null);
     if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current);
     closeTimerRef.current = window.setTimeout(() => {
-      setSelectedDevice(null);
       setIsClosing(false);
     }, 300);
   }, [isClosing, selectedDevice]);
@@ -944,6 +944,11 @@ function App() {
       document.removeEventListener('keydown', onKeyDown, true);
     };
   }, [selectedDevice, isClosing, handleCloseDeviceModal]);
+
+  useEffect(() => {
+    if (selectedDevice) return;
+    setIsEditing(false);
+  }, [selectedDevice]);
 
   useEffect(() => {
     if (session?.role === 'admin') {
@@ -3382,15 +3387,11 @@ function App() {
         ? createPortal(
             <div
               className={`fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm ${isClosing ? 'pointer-events-none' : ''}`}
-              onPointerDownCapture={(e) => {
-                if (e.target !== e.currentTarget) return
-                handleCloseDeviceModal(e)
-              }}
-              onClick={(e) => {
-                if (e.target !== e.currentTarget) return
-                handleCloseDeviceModal(e)
-              }}
             >
+              {(() => {
+                console.log({ photoUrl: selectedDevice?.photo });
+                return null;
+              })()}
               <motion.div
                 ref={deviceModalContentRef}
                 initial={{ opacity: 0, scale: 0.98 }}
@@ -3401,16 +3402,22 @@ function App() {
               >
                 <button
                   type="button"
-                  onPointerDownCapture={(e) => handleCloseDeviceModal(e)}
                   onClick={(e) => handleCloseDeviceModal(e)}
-                  className="absolute top-6 right-6 w-12 h-12 flex items-center justify-center bg-slate-50 hover:bg-slate-100 rounded-2xl z-[70] cursor-pointer"
+                  className="absolute top-4 right-4 w-14 h-14 flex items-center justify-center bg-slate-50 hover:bg-slate-100 rounded-2xl z-[9999] cursor-pointer"
                   aria-label="Tutup"
                 >
                   <XCircle className="w-6 h-6 text-slate-400" />
                 </button>
                 <div className="flex flex-col lg:flex-row">
                   <div className="w-full lg:w-1/2 bg-slate-50 relative min-h-[400px]">
-                    {selectedDevice.photo ? <ImageWithPlaceholder src={selectedDevice.photo} alt={selectedDevice.name} /> : (
+                    {selectedDevice.photo ? (
+                      <ImageWithPlaceholder src={selectedDevice.photo} alt={selectedDevice.name} />
+                    ) : selectedDevice.photoR2Key ? (
+                      <div className="w-full h-full flex flex-col items-center justify-center text-slate-300 p-12">
+                        <Camera className="w-20 h-20 mb-6 opacity-20" />
+                        <p className="text-sm font-bold">Memuat Foto...</p>
+                      </div>
+                    ) : (
                       <div className="w-full h-full flex flex-col items-center justify-center text-slate-300 p-12">
                         <Camera className="w-20 h-20 mb-6 opacity-20" />
                         <p className="text-sm font-bold">Belum Ada Foto</p>
