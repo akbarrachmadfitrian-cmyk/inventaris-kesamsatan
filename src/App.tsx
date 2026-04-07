@@ -752,6 +752,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [dbAvailable, setDbAvailable] = useState(false);
   const [dbNeedsImport, setDbNeedsImport] = useState(false);
+  const [dbError, setDbError] = useState<string | null>(null);
   const [samsatIndex, setSamsatIndex] = useState<string[]>([]);
   const [samsatTotals, setSamsatTotals] = useState<Record<string, number>>({});
   const [searchTerm, setSearchTerm] = useState('');
@@ -2034,6 +2035,7 @@ function App() {
 
         setDbAvailable(true);
         setDbNeedsImport(typedItemsRaw.length === 0);
+        setDbError(null);
 
         try {
           const idxRes = await axios.get('/api/public/samsat', { timeout: 8000 });
@@ -2084,11 +2086,24 @@ function App() {
         if (axios.isAxiosError(err) && err.response?.status === 403) {
           setDbAvailable(false);
           setDbNeedsImport(false);
-          window.alert('Akses database ditolak. Pastikan API key benar.');
+          setDbError('Akses database ditolak. Pastikan API key benar.');
+          setDevices([]);
+          setSamsatIndex([]);
+          setSamsatTotals({});
           return;
         }
         setDbAvailable(false);
         setDbNeedsImport(false);
+        const data = axios.isAxiosError(err) ? (err.response?.data as unknown) : null;
+        const msg =
+          data && typeof data === 'object' && data !== null && 'error' in data
+            ? String((data as { error?: unknown }).error || 'Gagal mengambil data dari database.')
+            : 'Gagal mengambil data dari database.';
+        setDbError(msg);
+        setDevices([]);
+        setSamsatIndex([]);
+        setSamsatTotals({});
+        return;
       }
 
       const baseUrl = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRqd9Fuc8MRfwWgzB5TJ-8trqSCerRy5-mbzhy-wJo_faoLLe9JItOxyKXBJ2A9l8MpFoswgpTxfxN1/pub?output=csv&gid=';
@@ -3201,7 +3216,7 @@ function App() {
                   </div>
                   <h3 className="text-xl font-black text-slate-900 mb-2">Data Kantor Tidak Ditemukan</h3>
                   <p className="text-sm text-slate-500 max-w-xs mb-8">
-                    Gagal memproses data dari Google Sheets. Pastikan spreadsheet memiliki kolom lokasi yang benar.
+                    {dbError || 'Data dari database belum tersedia.'}
                   </p>
                   <button 
                     onClick={fetchData}
