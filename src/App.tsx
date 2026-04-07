@@ -916,6 +916,15 @@ function App() {
     console.log('[device-modal] close', selectedDevice.id);
     isTransitioningRef.current = true;
     setIsEditing(false);
+    setModalImageUrl(null);
+    if (modalImageObjectUrlRef.current) {
+      URL.revokeObjectURL(modalImageObjectUrlRef.current);
+      modalImageObjectUrlRef.current = null;
+    }
+    if (modalImageFetchAbortRef.current) {
+      modalImageFetchAbortRef.current.abort();
+      modalImageFetchAbortRef.current = null;
+    }
     setSelectedDevice(null);
 
     if (prevBodyPointerEventsRef.current === null) {
@@ -2319,11 +2328,16 @@ function App() {
   const photoUrlCacheRef = useRef<Map<string, string>>(new Map());
   const [modalImageUrl, setModalImageUrl] = useState<string | null>(null);
   const modalImageObjectUrlRef = useRef<string | null>(null);
+  const modalImageFetchAbortRef = useRef<AbortController | null>(null);
   const modalDeviceId = selectedDevice?.id;
   const modalDevicePhoto = selectedDevice?.photo;
 
   useEffect(() => {
     if (!modalDeviceId) {
+      if (modalImageFetchAbortRef.current) {
+        modalImageFetchAbortRef.current.abort();
+        modalImageFetchAbortRef.current = null;
+      }
       if (modalImageObjectUrlRef.current) {
         URL.revokeObjectURL(modalImageObjectUrlRef.current);
         modalImageObjectUrlRef.current = null;
@@ -2344,17 +2358,26 @@ function App() {
     }
 
     let cancelled = false;
+    if (modalImageFetchAbortRef.current) modalImageFetchAbortRef.current.abort();
+    const controller = new AbortController();
+    modalImageFetchAbortRef.current = controller;
     void (async () => {
       try {
-        const blob = await (await fetch(src)).blob();
-        const url = URL.createObjectURL(blob);
-        if (cancelled) {
-          URL.revokeObjectURL(url);
-          return;
-        }
-        if (modalImageObjectUrlRef.current) URL.revokeObjectURL(modalImageObjectUrlRef.current);
-        modalImageObjectUrlRef.current = url;
-        setModalImageUrl(url);
+        const run = async () => {
+          const blob = await (await fetch(src, { signal: controller.signal })).blob();
+          const url = URL.createObjectURL(blob);
+          if (cancelled) {
+            URL.revokeObjectURL(url);
+            return;
+          }
+          if (modalImageObjectUrlRef.current) URL.revokeObjectURL(modalImageObjectUrlRef.current);
+          modalImageObjectUrlRef.current = url;
+          setModalImageUrl(url);
+        };
+
+        const g = globalThis as unknown as { requestIdleCallback?: (cb: () => void) => void };
+        if (typeof g.requestIdleCallback === 'function') g.requestIdleCallback(() => void run());
+        else setTimeout(() => void run(), 0);
       } catch {
         setModalImageUrl(null);
       }
@@ -2362,6 +2385,7 @@ function App() {
 
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [modalDeviceId, modalDevicePhoto]);
 
