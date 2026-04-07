@@ -160,11 +160,18 @@ interface AccountAccess {
   allowedSamsat: string[] | null;
 }
 
+const normalizeSamsatName = (raw: string) => {
+  const s = String(raw || '').trim().toUpperCase();
+  if (s === 'SAMSAT BANJARMASIN 1') return 'SAMSAT BANJARMASIN I';
+  if (s === 'SAMSAT BANJARMASIN 2') return 'SAMSAT BANJARMASIN II';
+  return s;
+};
+
 const SAMSAT_USER_PASSWORD = 'bapendakalsel2025';
 
 const SAMSAT_USER_ACCOUNTS: Record<string, string> = {
-  samsatbanjarmasin1: 'SAMSAT BANJARMASIN 1',
-  samsatbanjarmasin2: 'SAMSAT BANJARMASIN 2',
+  samsatbanjarmasin1: 'SAMSAT BANJARMASIN I',
+  samsatbanjarmasin2: 'SAMSAT BANJARMASIN II',
   samsatbanjarbaru: 'SAMSAT BANJARBARU',
   samsatmartapura: 'SAMSAT MARTAPURA',
   samsatrantau: 'SAMSAT RANTAU',
@@ -187,7 +194,7 @@ const SUB_ADMIN_ACCOUNTS: Record<
   adminagung: {
     password: 'agunginfra',
     scope: 'restricted',
-    allowedSamsat: ['SAMSAT BANJARMASIN 1', 'SAMSAT MARABAHAN', 'SAMSAT PARINGIN', 'SAMSAT KOTABARU'],
+    allowedSamsat: ['SAMSAT BANJARMASIN I', 'SAMSAT MARABAHAN', 'SAMSAT PARINGIN', 'SAMSAT KOTABARU'],
     hideManageLogin: true,
   },
   adminfajrin: {
@@ -205,7 +212,7 @@ const SUB_ADMIN_ACCOUNTS: Record<
   adminkurnia: {
     password: 'kurniainfra',
     scope: 'restricted',
-    allowedSamsat: ['SAMSAT BANJARMASIN 2', 'SAMSAT RANTAU', 'SAMSAT TANJUNG'],
+    allowedSamsat: ['SAMSAT BANJARMASIN II', 'SAMSAT RANTAU', 'SAMSAT TANJUNG'],
     hideManageLogin: true,
   },
 };
@@ -236,7 +243,7 @@ const getAccountAccess = (session: AuthSession | null): AccountAccess => {
 
     const sub = SUB_ADMIN_ACCOUNTS[username];
     if (sub) {
-      const allowedSamsat = sub.scope === 'restricted' ? sub.allowedSamsat || [] : null;
+      const allowedSamsat = sub.scope === 'restricted' ? (sub.allowedSamsat || []).map(normalizeSamsatName) : null;
       return {
         canSelectSamsat: sub.scope === 'restricted' ? true : true,
         canManageLogin: !sub.hideManageLogin,
@@ -273,7 +280,7 @@ const getAccountAccess = (session: AuthSession | null): AccountAccess => {
         canManageLogin: false,
         canAddDevice: false,
         canEditRequests: false,
-        allowedSamsat: [samsat],
+        allowedSamsat: [normalizeSamsatName(samsat)],
       };
     }
 
