@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import axios from 'axios'
 import { createPortal } from 'react-dom'
 import { QRCodeSVG } from 'qrcode.react'
+import { ImageWithPlaceholder } from './components/ImageWithPlaceholder'
 import { 
   Camera, Upload, CheckCircle2, QrCode, Search, RefreshCw,
   Monitor, Printer, LayoutDashboard, ChevronRight,
@@ -30,40 +31,6 @@ interface Device {
   samsat: string;
   serviceUnit: string;
   sheetName: string;
-}
-
-const DEBUG_MODAL = false
-
-const ImageWithPlaceholder = ({ src, alt }: { src: string; alt: string }) => {
-  const [ready, setReady] = useState(false)
-
-  useEffect(() => {
-    setReady(false)
-  }, [src])
-
-  return (
-    <div
-      className="w-full h-full relative bg-slate-50 transform-gpu"
-      style={{ contentVisibility: 'auto', contain: 'paint' }}
-    >
-      {!ready ? (
-        <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-300 p-12 pointer-events-none">
-          <Camera className="w-20 h-20 mb-6 opacity-20" />
-          <p className="text-sm font-bold">Memuat Foto...</p>
-        </div>
-      ) : null}
-      <img
-        src={src}
-        alt={alt}
-        loading="lazy"
-        decoding="async"
-        onLoad={() => setReady(true)}
-        onError={() => setReady(true)}
-        className={`w-full h-full ${ready ? 'opacity-100' : 'opacity-0'} transition-opacity duration-200`}
-        style={{ objectFit: 'contain' }}
-      />
-    </div>
-  )
 }
 
 interface Stats {
@@ -911,12 +878,14 @@ function App() {
       e.preventDefault();
       e.stopPropagation();
     }
+    if (deviceModalPortalRef.current) deviceModalPortalRef.current.style.display = 'none';
     if (isTransitioningRef.current) return;
     if (!selectedDevice) return;
     console.log('[device-modal] close', selectedDevice.id);
     isTransitioningRef.current = true;
     setIsEditing(false);
     setModalImageUrl(null);
+    setModalImageTooLarge(false);
     if (modalImageObjectUrlRef.current) {
       URL.revokeObjectURL(modalImageObjectUrlRef.current);
       modalImageObjectUrlRef.current = null;
@@ -981,6 +950,7 @@ function App() {
   }, [selectedDevice]);
 
   const deviceModalContentRef = useRef<HTMLDivElement | null>(null);
+  const deviceModalPortalRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!selectedDevice) return;
@@ -999,14 +969,15 @@ function App() {
       if (evt.key !== 'Escape') return;
       evt.preventDefault();
       evt.stopPropagation();
+      if (deviceModalPortalRef.current) deviceModalPortalRef.current.style.display = 'none';
       handleCloseDeviceModal();
     };
 
     document.addEventListener('pointerdown', onPointerDownCapture, true);
-    window.addEventListener('keydown', onKeyDown, { capture: true });
+    document.addEventListener('keydown', onKeyDown, true);
     return () => {
       document.removeEventListener('pointerdown', onPointerDownCapture, true);
-      window.removeEventListener('keydown', onKeyDown, { capture: true } as AddEventListenerOptions);
+      document.removeEventListener('keydown', onKeyDown, true);
     };
   }, [selectedDevice, handleCloseDeviceModal]);
 
@@ -2327,6 +2298,7 @@ function App() {
   const selectedDeviceHasBlobPhoto = !!(selectedDevice?.photo && selectedDevice.photo.startsWith('blob:'));
   const photoUrlCacheRef = useRef<Map<string, string>>(new Map());
   const [modalImageUrl, setModalImageUrl] = useState<string | null>(null);
+  const [modalImageTooLarge, setModalImageTooLarge] = useState(false);
   const modalImageObjectUrlRef = useRef<string | null>(null);
   const modalImageFetchAbortRef = useRef<AbortController | null>(null);
   const modalDeviceId = selectedDevice?.id;
@@ -2343,17 +2315,26 @@ function App() {
         modalImageObjectUrlRef.current = null;
       }
       setModalImageUrl(null);
+      setModalImageTooLarge(false);
       return;
     }
 
     const src = String(modalDevicePhoto || '');
     if (!src) {
       setModalImageUrl(null);
+      setModalImageTooLarge(false);
       return;
     }
 
     if (!src.startsWith('data:')) {
       setModalImageUrl(src);
+      setModalImageTooLarge(false);
+      return;
+    }
+
+    if (src.length > 1_000_000) {
+      setModalImageUrl(null);
+      setModalImageTooLarge(true);
       return;
     }
 
@@ -2373,6 +2354,7 @@ function App() {
           if (modalImageObjectUrlRef.current) URL.revokeObjectURL(modalImageObjectUrlRef.current);
           modalImageObjectUrlRef.current = url;
           setModalImageUrl(url);
+          setModalImageTooLarge(false);
         };
 
         const g = globalThis as unknown as { requestIdleCallback?: (cb: () => void) => void };
@@ -3512,12 +3494,12 @@ function App() {
 
       {typeof document !== 'undefined' && selectedDevice
         ? createPortal(
-            <div className="fixed inset-0 z-50">
+            <div ref={deviceModalPortalRef} className="fixed inset-0 z-50">
               <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" />
 
               <button
                 type="button"
-                onClick={(e) => handleCloseDeviceModal(e)}
+                onMouseDown={(e) => handleCloseDeviceModal(e)}
                 className="absolute top-4 right-4 w-16 h-16 flex items-center justify-center bg-white/90 border border-slate-200 hover:bg-white rounded-2xl z-[9999] cursor-pointer"
                 aria-label="Tutup"
                 style={{ willChange: 'opacity, transform' }}
@@ -3526,7 +3508,6 @@ function App() {
               </button>
 
               <div className="absolute inset-0 flex items-center justify-center p-4">
-                {DEBUG_MODAL ? (() => { console.log({ photoUrl: selectedDevice?.photo }); return null; })() : null}
                 <motion.div
                   ref={deviceModalContentRef}
                   initial={{ opacity: 0, scale: 0.98 }}
@@ -3539,6 +3520,11 @@ function App() {
                     <div className="w-full lg:w-1/2 bg-slate-50 relative min-h-[400px]">
                       {modalImageUrl ? (
                         <ImageWithPlaceholder src={modalImageUrl} alt={selectedDevice.name} />
+                      ) : modalImageTooLarge ? (
+                        <div className="w-full h-full flex flex-col items-center justify-center text-rose-500 p-12">
+                          <AlertTriangle className="w-20 h-20 mb-6 opacity-40" />
+                          <p className="text-sm font-black">Foto Terlalu Besar</p>
+                        </div>
                       ) : selectedDevice?.photoR2Key ? (
                         <div className="w-full h-full flex flex-col items-center justify-center text-slate-300 p-12">
                           <Camera className="w-20 h-20 mb-6 opacity-20" />
