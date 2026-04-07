@@ -888,6 +888,7 @@ function App() {
   const strictSheetSync = false;
 
   const [isClosing, setIsClosing] = useState(false);
+  const isTransitioningRef = useRef(false);
   const closeTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -901,24 +902,26 @@ function App() {
       e.preventDefault();
       e.stopPropagation();
     }
-    if (isClosing) return;
+    if (isTransitioningRef.current || isClosing) return;
     if (!selectedDevice) return;
     console.log('[device-modal] close', selectedDevice.id);
+    isTransitioningRef.current = true;
     setIsEditing(false);
     setIsClosing(true);
     setSelectedDevice(null);
     if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current);
     closeTimerRef.current = window.setTimeout(() => {
       setIsClosing(false);
-    }, 300);
+      isTransitioningRef.current = false;
+    }, 500);
   }, [isClosing, selectedDevice]);
 
   const handleDeviceCardClick = useCallback((d: Device) => {
-    if (isClosing) return;
+    if (isTransitioningRef.current || isClosing || selectedDevice) return;
     console.log('[device-modal] open', d.id);
     setSelectedDevice(d);
     setIsEditing(false);
-  }, [isClosing]);
+  }, [isClosing, selectedDevice]);
 
   const deviceModalContentRef = useRef<HTMLDivElement | null>(null);
 
@@ -3388,6 +3391,23 @@ function App() {
         </div>
       </main>
 
+      {typeof document !== 'undefined' && isClosing
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[99999] bg-transparent"
+              onPointerDownCapture={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+            />,
+            document.body
+          )
+        : null}
+
       {typeof document !== 'undefined' && selectedDevice
         ? createPortal(
             <div className="fixed inset-0 z-50">
@@ -3395,7 +3415,6 @@ function App() {
 
               <button
                 type="button"
-                onPointerDown={(e) => handleCloseDeviceModal(e)}
                 onClick={(e) => handleCloseDeviceModal(e)}
                 className="absolute top-4 right-4 w-16 h-16 flex items-center justify-center bg-white/90 border border-slate-200 hover:bg-white rounded-2xl z-[9999] cursor-pointer"
                 aria-label="Tutup"
