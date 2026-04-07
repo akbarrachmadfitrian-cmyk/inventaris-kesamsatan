@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import axios from 'axios'
 import { QRCodeSVG } from 'qrcode.react'
 import { 
@@ -2162,19 +2162,27 @@ function App() {
   const selectedDeviceId = selectedDevice?.id;
   const selectedDevicePhotoR2Key = selectedDevice?.photoR2Key;
   const selectedDeviceHasBlobPhoto = !!(selectedDevice?.photo && selectedDevice.photo.startsWith('blob:'));
+  const photoUrlCacheRef = useRef<Map<string, string>>(new Map());
 
   useEffect(() => {
     if (!session) return;
     if (!selectedDeviceId) return;
     if (!selectedDevicePhotoR2Key) return;
     if (selectedDeviceHasBlobPhoto) return;
+    const cached = photoUrlCacheRef.current.get(selectedDeviceId);
+    if (cached) {
+      setDevices(prev => prev.map(d => (String(d.id || '').trim() === String(selectedDeviceId).trim() ? { ...d, photo: cached, isComplete: true } : d)));
+      setSelectedDevice(prev => (prev && prev.id === selectedDeviceId ? { ...prev, photo: cached, isComplete: true } : prev));
+      return;
+    }
     let url: string | null = null;
     let cancelled = false;
+    const controller = new AbortController();
     void (async () => {
       try {
         const fetchBlob = async () => {
           const endpoint = session.role === 'admin' ? '/api/admin/device-photo' : '/api/public/device-photo';
-          const res = await axios.get(endpoint, { params: { deviceId: selectedDeviceId }, responseType: 'blob', timeout: 20000 });
+          const res = await axios.get(endpoint, { params: { deviceId: selectedDeviceId }, responseType: 'blob', timeout: 20000, signal: controller.signal });
           return res;
         };
 
@@ -2209,8 +2217,18 @@ function App() {
           URL.revokeObjectURL(url);
           return;
         }
+        photoUrlCacheRef.current.set(selectedDeviceId, url);
+        if (photoUrlCacheRef.current.size > 60) {
+          const first = photoUrlCacheRef.current.keys().next().value as string | undefined;
+          if (first) {
+            const old = photoUrlCacheRef.current.get(first);
+            if (old) URL.revokeObjectURL(old);
+            photoUrlCacheRef.current.delete(first);
+          }
+        }
         setDevices(prev => prev.map(d => (String(d.id || '').trim() === String(selectedDeviceId).trim() ? { ...d, photo: url || undefined, isComplete: true } : d)));
         setSelectedDevice(prev => (prev && prev.id === selectedDeviceId ? { ...prev, photo: url || undefined, isComplete: true } : prev));
+        url = null;
       } catch {
         void 0;
       }
@@ -2218,6 +2236,7 @@ function App() {
 
     return () => {
       cancelled = true;
+      controller.abort();
       if (url) URL.revokeObjectURL(url);
     };
   }, [selectedDeviceId, selectedDevicePhotoR2Key, selectedDeviceHasBlobPhoto, session]);
@@ -2264,25 +2283,65 @@ function App() {
     const file = e.target.files?.[0];
     if (file) {
       if (dbAvailable) {
+        const optimize = async (input: File) => {
+          if (!input.type.startsWith('image/')) return input;
+          const objectUrl = URL.createObjectURL(input);
+          try {
+            const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+              const i = new Image();
+              i.onload = () => resolve(i);
+              i.onerror = () => reject(new Error('Gagal membaca gambar'));
+              i.src = objectUrl;
+            });
+
+            const maxDim = 1280;
+            const w = Math.max(1, img.naturalWidth || img.width || 1);
+            const h = Math.max(1, img.naturalHeight || img.height || 1);
+            const scale = Math.min(1, maxDim / Math.max(w, h));
+            const outW = Math.max(1, Math.round(w * scale));
+            const outH = Math.max(1, Math.round(h * scale));
+
+            const canvas = document.createElement('canvas');
+            canvas.width = outW;
+            canvas.height = outH;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return input;
+            ctx.drawImage(img, 0, 0, outW, outH);
+
+            const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.75));
+            if (!blob) return input;
+            if (blob.size >= input.size) return input;
+            return new File([blob], `${input.name.replace(/\.[^.]+$/, '') || 'photo'}.jpg`, { type: 'image/jpeg' });
+          } catch {
+            return input;
+          } finally {
+            URL.revokeObjectURL(objectUrl);
+          }
+        };
+
         const doUpload = async () => {
+          const uploadFile = await optimize(file);
           const form = new FormData();
           form.append('action', 'upload');
           form.append('deviceId', deviceId);
-          form.append('file', file);
+          form.append('file', uploadFile);
           const res = await axios.post('/api/admin/device-photo', form, { timeout: 60000 });
-          return res.data as { photoR2Key?: string | null };
+          return { uploadFile, out: res.data as { photoR2Key?: string | null } };
         };
 
         void (async () => {
           try {
-            const out = await doUpload();
+            const { uploadFile, out } = await doUpload();
             const savedPhotos = safeParseJSON<Record<string, string>>(localStorage.getItem('samsat_device_photos'), {});
             if (savedPhotos[deviceId]) {
               delete savedPhotos[deviceId];
               localStorage.setItem('samsat_device_photos', JSON.stringify(savedPhotos));
             }
 
-            const url = URL.createObjectURL(file);
+            const existing = photoUrlCacheRef.current.get(deviceId);
+            if (existing) URL.revokeObjectURL(existing);
+            const url = URL.createObjectURL(uploadFile);
+            photoUrlCacheRef.current.set(deviceId, url);
             setDevices(prev => prev.map(d => (d.id === deviceId ? { ...d, photoR2Key: out.photoR2Key ?? d.photoR2Key ?? null, photo: url, isComplete: true } : d)));
             setSelectedDevice(prev => (prev && prev.id === deviceId ? { ...prev, photoR2Key: out.photoR2Key ?? prev.photoR2Key ?? null, photo: url, isComplete: true } : prev));
             await fetchData();
@@ -2290,6 +2349,7 @@ function App() {
             window.alert('Gagal upload foto ke database sistem.');
           }
         })();
+        e.target.value = '';
         return;
       }
 
@@ -2304,6 +2364,7 @@ function App() {
         localStorage.setItem('samsat_device_photos', JSON.stringify(savedPhotos));
       };
       reader.readAsDataURL(file);
+      e.target.value = '';
     }
   };
 
@@ -2311,6 +2372,12 @@ function App() {
     if (!isAdmin) return;
     const ok = window.confirm('Hapus foto perangkat ini?');
     if (!ok) return;
+
+    const cached = photoUrlCacheRef.current.get(deviceId);
+    if (cached) {
+      URL.revokeObjectURL(cached);
+      photoUrlCacheRef.current.delete(deviceId);
+    }
 
     if (dbAvailable) {
       void (async () => {
@@ -3216,9 +3283,30 @@ function App() {
       {/* Detail Modal */}
       <AnimatePresence>
         {selectedDevice && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-[3rem] w-full max-w-4xl overflow-hidden shadow-2xl relative">
-              <button onClick={() => setSelectedDevice(null)} className="absolute top-8 right-8 p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl z-20">
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm"
+            onPointerDown={(e) => {
+              if (e.target !== e.currentTarget) return;
+              setIsEditing(false);
+              setSelectedDevice(null);
+            }}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[3rem] w-full max-w-4xl overflow-hidden shadow-2xl relative"
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <button
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setIsEditing(false);
+                  setSelectedDevice(null);
+                }}
+                className="absolute top-8 right-8 p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl z-20"
+              >
                 <XCircle className="w-6 h-6 text-slate-400" />
               </button>
               <div className="flex flex-col lg:flex-row">
