@@ -857,7 +857,6 @@ function App() {
   const isTransitioningRef = useRef(false);
   const closeTimerRef = useRef<number | null>(null);
   const closeOverlayRef = useRef<HTMLDivElement | null>(null);
-  const prevBodyPointerEventsRef = useRef<string | null>(null);
 
   useEffect(() => {
     return () => {
@@ -866,10 +865,7 @@ function App() {
         closeOverlayRef.current.remove();
         closeOverlayRef.current = null;
       }
-      if (prevBodyPointerEventsRef.current !== null) {
-        document.body.style.pointerEvents = prevBodyPointerEventsRef.current;
-        prevBodyPointerEventsRef.current = null;
-      }
+      isTransitioningRef.current = false;
     };
   }, []);
 
@@ -894,12 +890,12 @@ function App() {
       modalImageFetchAbortRef.current.abort();
       modalImageFetchAbortRef.current = null;
     }
-    setSelectedDevice(null);
-
-    if (prevBodyPointerEventsRef.current === null) {
-      prevBodyPointerEventsRef.current = document.body.style.pointerEvents || '';
+    try {
+      window.stop();
+    } catch {
+      void 0;
     }
-    document.body.style.pointerEvents = 'none';
+    setSelectedDevice(null);
 
     if (!closeOverlayRef.current) {
       const overlay = document.createElement('div');
@@ -935,14 +931,14 @@ function App() {
         closeOverlayRef.current.remove();
         closeOverlayRef.current = null;
       }
-      if (prevBodyPointerEventsRef.current !== null) {
-        document.body.style.pointerEvents = prevBodyPointerEventsRef.current;
-        prevBodyPointerEventsRef.current = null;
-      }
-    }, 500);
+    }, 1000);
   }, [selectedDevice]);
 
-  const handleDeviceCardClick = useCallback((d: Device) => {
+  const handleDeviceCardClick = useCallback((d: Device, e?: { preventDefault: () => void; stopPropagation: () => void }) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     if (isTransitioningRef.current || selectedDevice) return;
     console.log('[device-modal] open', d.id);
     setSelectedDevice(d);
@@ -970,6 +966,11 @@ function App() {
       evt.preventDefault();
       evt.stopPropagation();
       if (deviceModalPortalRef.current) deviceModalPortalRef.current.style.display = 'none';
+      try {
+        window.stop();
+      } catch {
+        void 0;
+      }
       handleCloseDeviceModal();
     };
 
@@ -3446,8 +3447,8 @@ function App() {
                 {filteredDevices.map((d) => (
                   <motion.div 
                     key={d.id}
-                    onClick={() => {
-                      handleDeviceCardClick(d);
+                    onClick={(e) => {
+                      handleDeviceCardClick(d, e);
                     }}
                     className="bg-white border border-slate-100 rounded-3xl p-6 shadow-sm hover:shadow-md transition-all cursor-pointer group"
                   >
@@ -3458,8 +3459,7 @@ function App() {
                       <div className="flex items-center gap-2">
                         <button
                           onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeviceCardClick(d);
+                            handleDeviceCardClick(d, e);
                           }}
                           className="px-3 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-black transition-colors"
                         >
@@ -3744,7 +3744,9 @@ function App() {
                     {dashboardFilteredDevices.map((d) => (
                       <button
                         key={d.id}
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
                           setIsDashboardDevicesModalOpen(false);
                           handleDeviceCardClick(d);
                         }}
