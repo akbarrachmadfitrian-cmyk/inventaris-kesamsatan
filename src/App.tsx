@@ -2850,74 +2850,106 @@ function App() {
 
   if (!session) {
     return (
-      <div className="min-h-[100dvh] bg-[#F8FAFC] text-[#1E293B] font-sans flex items-start sm:items-center justify-center px-4 py-6 sm:p-6 pt-[calc(env(safe-area-inset-top)+1.5rem)] pb-[calc(env(safe-area-inset-bottom)+1.5rem)] overflow-y-auto">
-        <div className="w-full max-w-md">
-          <div className="flex flex-col items-center mb-6 sm:mb-7">
-            <img
-              src="https://bapenda.kalselprov.go.id/wp-content/uploads/2025/08/Logo-Sayembara-Bapenda.png"
-              alt="Bapenda Kalimantan Selatan"
-              referrerPolicy="no-referrer"
-              className="h-16 sm:h-20 w-auto object-contain"
-            />
-            <h1 className="mt-4 text-xl font-black text-slate-900 text-center">Inventaris Kesamsatan</h1>
-            <p className="text-[11px] text-slate-500 font-bold text-center">BAPENDA PROV KALSEL</p>
-          </div>
+      <div className="min-h-[100dvh] bg-gradient-to-br from-slate-50 via-slate-100 to-slate-50 text-[#1E293B] font-sans flex items-center justify-center px-4 py-6 relative overflow-hidden">
+        {/* Background blur circles */}
+        <div className="absolute top-[-20%] left-[-10%] w-[500px] h-[500px] bg-teal-200/40 rounded-full blur-3xl" />
+        <div className="absolute bottom-[-20%] right-[-10%] w-[600px] h-[600px] bg-blue-200/30 rounded-full blur-3xl" />
+        <div className="absolute top-[30%] right-[10%] w-[300px] h-[300px] bg-cyan-100/30 rounded-full blur-3xl" />
 
-          <div className="bg-white border border-slate-200 rounded-[2rem] p-5 sm:p-8 shadow-sm">
-            <div className="grid grid-cols-2 bg-slate-50 border border-slate-200 rounded-2xl p-1 mb-6">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="w-full max-w-md relative z-10"
+        >
+          <div className="bg-white/80 backdrop-blur-xl border border-white/60 rounded-[2.5rem] p-8 sm:p-10 shadow-2xl shadow-slate-200/50">
+            {/* Logo */}
+            <div className="flex flex-col items-center mb-8">
+              <img
+                src="https://bapenda.kalselprov.go.id/wp-content/uploads/2025/08/Logo-Sayembara-Bapenda.png"
+                alt="Bapenda Kalimantan Selatan"
+                referrerPolicy="no-referrer"
+                className="h-20 sm:h-24 w-auto object-contain"
+              />
+              <div className="flex items-center gap-2 mt-5">
+                <svg className="w-5 h-5 text-teal-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+                </svg>
+                <span className="text-sm font-bold text-teal-600 tracking-wide">Inventaris Perangkat Kesamsatan</span>
+              </div>
+            </div>
+
+            {/* Tab Switcher */}
+            <div className="grid grid-cols-2 bg-slate-100/80 border border-slate-200/60 rounded-2xl p-1 mb-7">
               <button
                 onClick={() => { setAuthTab('admin'); setAuthUsername(''); setAuthPassword(''); setAuthError(null); }}
-                className={`py-2 rounded-xl text-xs font-black transition-all ${authTab === 'admin' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
+                className={`py-2.5 rounded-xl text-xs font-black transition-all ${authTab === 'admin' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-400 hover:text-slate-600'}`}
               >
                 Super Admin
               </button>
               <button
                 onClick={() => { setAuthTab('user'); setAuthUsername(''); setAuthPassword(''); setAuthError(null); }}
-                className={`py-2 rounded-xl text-xs font-black transition-all ${authTab === 'user' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
+                className={`py-2.5 rounded-xl text-xs font-black transition-all ${authTab === 'user' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-400 hover:text-slate-600'}`}
               >
                 User
               </button>
             </div>
 
-            <div className="space-y-4">
+            {/* Form */}
+            <div className="space-y-5">
               <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">User</label>
-                <input
-                  value={authUsername}
-                  onChange={(e) => setAuthUsername(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') handleLogin(authTab); }}
-                  className="w-full p-4 sm:p-3 bg-white border border-slate-200 rounded-xl font-bold text-base sm:text-sm focus:ring-2 focus:ring-blue-500/20 outline-none"
-                  placeholder="Masukkan user"
-                />
+                <label className="text-xs font-bold text-slate-700 mb-2 block">Username Akses</label>
+                <div className="relative">
+                  <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" />
+                    </svg>
+                  </div>
+                  <input
+                    value={authUsername}
+                    onChange={(e) => setAuthUsername(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleLogin(authTab); }}
+                    className="w-full pl-12 pr-4 py-3.5 bg-white/50 border border-slate-200 rounded-2xl text-sm font-semibold text-slate-900 focus:border-teal-400 focus:ring-2 focus:ring-teal-400/20 outline-none transition-all placeholder:text-slate-400"
+                    placeholder="Masukkan username"
+                  />
+                </div>
               </div>
 
               <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Password</label>
-                <input
-                  type="password"
-                  value={authPassword}
-                  onChange={(e) => setAuthPassword(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') handleLogin(authTab); }}
-                  className="w-full p-4 sm:p-3 bg-white border border-slate-200 rounded-xl font-bold text-base sm:text-sm focus:ring-2 focus:ring-blue-500/20 outline-none"
-                  placeholder="Masukkan password"
-                />
+                <label className="text-xs font-bold text-slate-700 mb-2 block">Kata Sandi</label>
+                <div className="relative">
+                  <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                    </svg>
+                  </div>
+                  <input
+                    type="password"
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleLogin(authTab); }}
+                    className="w-full pl-12 pr-4 py-3.5 bg-white/50 border border-slate-200 rounded-2xl text-sm font-semibold text-slate-900 focus:border-teal-400 focus:ring-2 focus:ring-teal-400/20 outline-none transition-all placeholder:text-slate-400"
+                    placeholder="Masukkan sandi rahasia"
+                  />
+                </div>
               </div>
 
               {authError && (
-                <div className="px-4 py-3 bg-rose-50 border border-rose-100 rounded-2xl text-rose-700 text-xs font-bold">
+                <div className="px-4 py-3 bg-rose-50 border border-rose-100 rounded-2xl text-rose-700 text-xs font-bold flex items-center gap-2">
+                  <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
                   {authError}
                 </div>
               )}
 
               <button
                 onClick={() => handleLogin(authTab)}
-                className="w-full px-6 py-4 sm:py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black text-base sm:text-sm transition-all shadow-lg shadow-blue-200"
+                className="w-full py-4 bg-teal-600 hover:bg-teal-700 text-white rounded-2xl font-black text-sm tracking-wider transition-all shadow-lg shadow-teal-500/20 uppercase"
               >
-                Masuk
+                Login
               </button>
             </div>
           </div>
-        </div>
+        </motion.div>
       </div>
     );
   }
