@@ -32,6 +32,8 @@ interface Device {
   sheetName: string;
 }
 
+const DEBUG_MODAL = false
+
 const ImageWithPlaceholder = ({ src, alt }: { src: string; alt: string }) => {
   const [ready, setReady] = useState(false)
 
@@ -40,7 +42,10 @@ const ImageWithPlaceholder = ({ src, alt }: { src: string; alt: string }) => {
   }, [src])
 
   return (
-    <div className="w-full h-full relative bg-slate-50 transform-gpu">
+    <div
+      className="w-full h-full relative bg-slate-50 transform-gpu"
+      style={{ contentVisibility: 'auto', contain: 'paint' }}
+    >
       {!ready ? (
         <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-300 p-12 pointer-events-none">
           <Camera className="w-20 h-20 mb-6 opacity-20" />
@@ -3385,63 +3390,63 @@ function App() {
 
       {typeof document !== 'undefined' && selectedDevice
         ? createPortal(
-            <div
-              className={`fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm ${isClosing ? 'pointer-events-none' : ''}`}
-            >
-              {(() => {
-                console.log({ photoUrl: selectedDevice?.photo });
-                return null;
-              })()}
-              <motion.div
-                ref={deviceModalContentRef}
-                initial={{ opacity: 0, scale: 0.98 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.98 }}
-                className="bg-white rounded-[3rem] w-full max-w-4xl overflow-hidden shadow-2xl relative transform-gpu"
-                style={{ transform: 'translateZ(0)', willChange: 'transform' }}
+            <div className="fixed inset-0 z-50">
+              <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" />
+
+              <button
+                type="button"
+                onPointerDown={(e) => handleCloseDeviceModal(e)}
+                onClick={(e) => handleCloseDeviceModal(e)}
+                className="absolute top-4 right-4 w-16 h-16 flex items-center justify-center bg-white/90 border border-slate-200 hover:bg-white rounded-2xl z-[9999] cursor-pointer"
+                aria-label="Tutup"
               >
-                <button
-                  type="button"
-                  onClick={(e) => handleCloseDeviceModal(e)}
-                  className="absolute top-4 right-4 w-14 h-14 flex items-center justify-center bg-slate-50 hover:bg-slate-100 rounded-2xl z-[9999] cursor-pointer"
-                  aria-label="Tutup"
+                <XCircle className="w-7 h-7 text-slate-600" />
+              </button>
+
+              <div className={`absolute inset-0 flex items-center justify-center p-4 ${isClosing ? 'pointer-events-none' : ''}`}>
+                {DEBUG_MODAL ? (() => { console.log({ photoUrl: selectedDevice?.photo }); return null; })() : null}
+                <motion.div
+                  ref={deviceModalContentRef}
+                  initial={{ opacity: 0, scale: 0.98 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.98 }}
+                  className="bg-white rounded-[3rem] w-full max-w-4xl overflow-hidden shadow-2xl relative transform-gpu"
+                  style={{ transform: 'translateZ(0)', willChange: 'transform' }}
                 >
-                  <XCircle className="w-6 h-6 text-slate-400" />
-                </button>
-                <div className="flex flex-col lg:flex-row">
-                  <div className="w-full lg:w-1/2 bg-slate-50 relative min-h-[400px]">
-                    {selectedDevice.photo ? (
-                      <ImageWithPlaceholder src={selectedDevice.photo} alt={selectedDevice.name} />
-                    ) : selectedDevice.photoR2Key ? (
-                      <div className="w-full h-full flex flex-col items-center justify-center text-slate-300 p-12">
-                        <Camera className="w-20 h-20 mb-6 opacity-20" />
-                        <p className="text-sm font-bold">Memuat Foto...</p>
-                      </div>
-                    ) : (
-                      <div className="w-full h-full flex flex-col items-center justify-center text-slate-300 p-12">
-                        <Camera className="w-20 h-20 mb-6 opacity-20" />
-                        <p className="text-sm font-bold">Belum Ada Foto</p>
-                      </div>
-                    )}
-                    {isAdmin && (
-                      <div className="absolute bottom-8 left-8 right-8 flex gap-3">
-                        <label className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl cursor-pointer flex items-center justify-center gap-3 font-bold transition-all">
-                          <Upload className="w-5 h-5" />
-                          <span>Upload Foto</span>
-                          <input type="file" className="hidden" accept="image/*" onChange={(e) => handlePhotoUpload(selectedDevice.id, e)} />
-                        </label>
-                        {(selectedDevice.photo || selectedDevice.photoR2Key) && (
-                          <button
-                            onClick={() => handlePhotoDelete(selectedDevice.id)}
-                            className="px-5 bg-white border border-slate-200 hover:bg-rose-50 text-rose-600 py-4 rounded-2xl font-black transition-all"
-                          >
-                            Hapus
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  <div className="w-full lg:w-1/2 p-12 overflow-y-auto max-h-[80vh]">
+                  <div className="flex flex-col lg:flex-row">
+                    <div className="w-full lg:w-1/2 bg-slate-50 relative min-h-[400px]">
+                      {selectedDevice?.photo ? (
+                        <ImageWithPlaceholder src={selectedDevice.photo} alt={selectedDevice.name} />
+                      ) : selectedDevice?.photoR2Key ? (
+                        <div className="w-full h-full flex flex-col items-center justify-center text-slate-300 p-12">
+                          <Camera className="w-20 h-20 mb-6 opacity-20" />
+                          <p className="text-sm font-bold">Memuat Foto...</p>
+                        </div>
+                      ) : (
+                        <div className="w-full h-full flex flex-col items-center justify-center text-slate-300 p-12">
+                          <Camera className="w-20 h-20 mb-6 opacity-20" />
+                          <p className="text-sm font-bold">Belum Ada Foto</p>
+                        </div>
+                      )}
+                      {isAdmin && (
+                        <div className="absolute bottom-8 left-8 right-8 flex gap-3">
+                          <label className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl cursor-pointer flex items-center justify-center gap-3 font-bold transition-all">
+                            <Upload className="w-5 h-5" />
+                            <span>Upload Foto</span>
+                            <input type="file" className="hidden" accept="image/*" onChange={(e) => handlePhotoUpload(selectedDevice.id, e)} />
+                          </label>
+                          {(selectedDevice.photo || selectedDevice.photoR2Key) && (
+                            <button
+                              onClick={() => handlePhotoDelete(selectedDevice.id)}
+                              className="px-5 bg-white border border-slate-200 hover:bg-rose-50 text-rose-600 py-4 rounded-2xl font-black transition-all"
+                            >
+                              Hapus
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <div className="w-full lg:w-1/2 p-12 overflow-y-auto max-h-[80vh]">
                     <div className="mb-8">
                       <h3 className="text-3xl font-black text-slate-900 text-center">
                         {isEditing ? 'Edit Perangkat' : selectedDevice.name}
@@ -3602,6 +3607,7 @@ function App() {
                 </div>
               </div>
               </motion.div>
+              </div>
             </div>,
             document.body
           )
