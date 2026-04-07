@@ -737,11 +737,14 @@ function App() {
 
   const [showPhoto, setShowPhoto] = useState(false);
 
+  const lastModalCloseRef = useRef(0);
+
   const handleCloseDeviceModal = useCallback((e?: { preventDefault: () => void; stopPropagation: () => void }) => {
     if (e) {
       e.preventDefault();
       e.stopPropagation();
     }
+    lastModalCloseRef.current = Date.now();
     setSelectedDevice(null);
     setShowPhoto(false);
     setIsEditing(false);
@@ -752,6 +755,8 @@ function App() {
       e.preventDefault();
       e.stopPropagation();
     }
+    // Guard: ignore ghost clicks within 400ms after modal close
+    if (Date.now() - lastModalCloseRef.current < 400) return;
     setShowPhoto(false);
     setIsEditing(false);
     setSelectedDevice(d);
