@@ -887,13 +887,22 @@ function App() {
   const accountAccess = useMemo(() => getAccountAccess(session), [session]);
   const strictSheetSync = false;
 
-  const [isClosing, setIsClosing] = useState(false);
   const isTransitioningRef = useRef(false);
   const closeTimerRef = useRef<number | null>(null);
+  const closeOverlayRef = useRef<HTMLDivElement | null>(null);
+  const prevBodyPointerEventsRef = useRef<string | null>(null);
 
   useEffect(() => {
     return () => {
       if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current);
+      if (closeOverlayRef.current) {
+        closeOverlayRef.current.remove();
+        closeOverlayRef.current = null;
+      }
+      if (prevBodyPointerEventsRef.current !== null) {
+        document.body.style.pointerEvents = prevBodyPointerEventsRef.current;
+        prevBodyPointerEventsRef.current = null;
+      }
     };
   }, []);
 
@@ -902,33 +911,72 @@ function App() {
       e.preventDefault();
       e.stopPropagation();
     }
-    if (isTransitioningRef.current || isClosing) return;
+    if (isTransitioningRef.current) return;
     if (!selectedDevice) return;
     console.log('[device-modal] close', selectedDevice.id);
     isTransitioningRef.current = true;
     setIsEditing(false);
-    setIsClosing(true);
     setSelectedDevice(null);
+
+    if (prevBodyPointerEventsRef.current === null) {
+      prevBodyPointerEventsRef.current = document.body.style.pointerEvents || '';
+    }
+    document.body.style.pointerEvents = 'none';
+
+    if (!closeOverlayRef.current) {
+      const overlay = document.createElement('div');
+      overlay.style.position = 'fixed';
+      overlay.style.inset = '0';
+      overlay.style.zIndex = '99999';
+      overlay.style.background = 'transparent';
+      overlay.style.pointerEvents = 'all';
+      overlay.addEventListener(
+        'pointerdown',
+        (evt) => {
+          evt.preventDefault();
+          evt.stopPropagation();
+        },
+        { capture: true }
+      );
+      overlay.addEventListener(
+        'click',
+        (evt) => {
+          evt.preventDefault();
+          evt.stopPropagation();
+        },
+        { capture: true }
+      );
+      document.documentElement.appendChild(overlay);
+      closeOverlayRef.current = overlay;
+    }
+
     if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current);
     closeTimerRef.current = window.setTimeout(() => {
-      setIsClosing(false);
       isTransitioningRef.current = false;
+      if (closeOverlayRef.current) {
+        closeOverlayRef.current.remove();
+        closeOverlayRef.current = null;
+      }
+      if (prevBodyPointerEventsRef.current !== null) {
+        document.body.style.pointerEvents = prevBodyPointerEventsRef.current;
+        prevBodyPointerEventsRef.current = null;
+      }
     }, 500);
-  }, [isClosing, selectedDevice]);
+  }, [selectedDevice]);
 
   const handleDeviceCardClick = useCallback((d: Device) => {
-    if (isTransitioningRef.current || isClosing || selectedDevice) return;
+    if (isTransitioningRef.current || selectedDevice) return;
     console.log('[device-modal] open', d.id);
     setSelectedDevice(d);
     setIsEditing(false);
-  }, [isClosing, selectedDevice]);
+  }, [selectedDevice]);
 
   const deviceModalContentRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!selectedDevice) return;
     const onPointerDownCapture = (evt: PointerEvent) => {
-      if (isClosing) return;
+      if (isTransitioningRef.current) return;
       const target = evt.target as Node | null;
       const el = deviceModalContentRef.current;
       if (!target || !el) return;
@@ -946,12 +994,12 @@ function App() {
     };
 
     document.addEventListener('pointerdown', onPointerDownCapture, true);
-    document.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('keydown', onKeyDown, { capture: true });
     return () => {
       document.removeEventListener('pointerdown', onPointerDownCapture, true);
-      document.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('keydown', onKeyDown, { capture: true } as AddEventListenerOptions);
     };
-  }, [selectedDevice, isClosing, handleCloseDeviceModal]);
+  }, [selectedDevice, handleCloseDeviceModal]);
 
   useEffect(() => {
     if (selectedDevice) return;
@@ -2269,6 +2317,53 @@ function App() {
   const selectedDevicePhotoR2Key = selectedDevice?.photoR2Key;
   const selectedDeviceHasBlobPhoto = !!(selectedDevice?.photo && selectedDevice.photo.startsWith('blob:'));
   const photoUrlCacheRef = useRef<Map<string, string>>(new Map());
+  const [modalImageUrl, setModalImageUrl] = useState<string | null>(null);
+  const modalImageObjectUrlRef = useRef<string | null>(null);
+  const modalDeviceId = selectedDevice?.id;
+  const modalDevicePhoto = selectedDevice?.photo;
+
+  useEffect(() => {
+    if (!modalDeviceId) {
+      if (modalImageObjectUrlRef.current) {
+        URL.revokeObjectURL(modalImageObjectUrlRef.current);
+        modalImageObjectUrlRef.current = null;
+      }
+      setModalImageUrl(null);
+      return;
+    }
+
+    const src = String(modalDevicePhoto || '');
+    if (!src) {
+      setModalImageUrl(null);
+      return;
+    }
+
+    if (!src.startsWith('data:')) {
+      setModalImageUrl(src);
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const blob = await (await fetch(src)).blob();
+        const url = URL.createObjectURL(blob);
+        if (cancelled) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        if (modalImageObjectUrlRef.current) URL.revokeObjectURL(modalImageObjectUrlRef.current);
+        modalImageObjectUrlRef.current = url;
+        setModalImageUrl(url);
+      } catch {
+        setModalImageUrl(null);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [modalDeviceId, modalDevicePhoto]);
 
   useEffect(() => {
     if (!session) return;
@@ -2935,7 +3030,7 @@ function App() {
   return (
     <div className="min-h-[100dvh] bg-[#F8FAFC] text-[#1E293B] font-sans flex flex-col lg:flex-row overflow-x-hidden lg:overflow-hidden">
       {/* Sidebar */}
-      <aside className={`w-full lg:w-72 bg-white border-b lg:border-b-0 lg:border-r border-slate-200 flex flex-col z-40 shrink-0 ${selectedDevice || isClosing ? 'pointer-events-none' : ''}`}>
+      <aside className={`w-full lg:w-72 bg-white border-b lg:border-b-0 lg:border-r border-slate-200 flex flex-col z-40 shrink-0 ${selectedDevice ? 'pointer-events-none' : ''}`}>
         <div className="p-4 sm:p-6 flex flex-col items-center gap-3 border-b border-slate-50">
           <img
             src="https://bapenda.kalselprov.go.id/wp-content/uploads/2025/08/Logo-Sayembara-Bapenda.png?v=20250823"
@@ -3120,7 +3215,7 @@ function App() {
       </aside>
 
       {/* Main Content */}
-      <main className={`flex-grow lg:overflow-y-auto ${selectedDevice || isClosing ? 'pointer-events-none' : ''}`}>
+      <main className={`flex-grow lg:overflow-y-auto ${selectedDevice ? 'pointer-events-none' : ''}`}>
         <header className="p-4 sm:p-8 pb-3 sm:pb-4">
           <h2 className="text-xl sm:text-2xl font-black text-slate-900 mb-1">
             {viewMode === 'selection' ? 'Daftar Kantor Samsat' : viewMode === 'scan-qr' ? 'Scan QR' : 'Dashboard'}
@@ -3391,23 +3486,6 @@ function App() {
         </div>
       </main>
 
-      {typeof document !== 'undefined' && isClosing
-        ? createPortal(
-            <div
-              className="fixed inset-0 z-[99999] bg-transparent"
-              onPointerDownCapture={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-              }}
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-              }}
-            />,
-            document.body
-          )
-        : null}
-
       {typeof document !== 'undefined' && selectedDevice
         ? createPortal(
             <div className="fixed inset-0 z-50">
@@ -3418,11 +3496,12 @@ function App() {
                 onClick={(e) => handleCloseDeviceModal(e)}
                 className="absolute top-4 right-4 w-16 h-16 flex items-center justify-center bg-white/90 border border-slate-200 hover:bg-white rounded-2xl z-[9999] cursor-pointer"
                 aria-label="Tutup"
+                style={{ willChange: 'opacity, transform' }}
               >
                 <XCircle className="w-7 h-7 text-slate-600" />
               </button>
 
-              <div className={`absolute inset-0 flex items-center justify-center p-4 ${isClosing ? 'pointer-events-none' : ''}`}>
+              <div className="absolute inset-0 flex items-center justify-center p-4">
                 {DEBUG_MODAL ? (() => { console.log({ photoUrl: selectedDevice?.photo }); return null; })() : null}
                 <motion.div
                   ref={deviceModalContentRef}
@@ -3434,8 +3513,8 @@ function App() {
                 >
                   <div className="flex flex-col lg:flex-row">
                     <div className="w-full lg:w-1/2 bg-slate-50 relative min-h-[400px]">
-                      {selectedDevice?.photo ? (
-                        <ImageWithPlaceholder src={selectedDevice.photo} alt={selectedDevice.name} />
+                      {modalImageUrl ? (
+                        <ImageWithPlaceholder src={modalImageUrl} alt={selectedDevice.name} />
                       ) : selectedDevice?.photoR2Key ? (
                         <div className="w-full h-full flex flex-col items-center justify-center text-slate-300 p-12">
                           <Camera className="w-20 h-20 mb-6 opacity-20" />
