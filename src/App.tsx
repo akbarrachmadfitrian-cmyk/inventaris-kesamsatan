@@ -854,138 +854,49 @@ function App() {
   const accountAccess = useMemo(() => getAccountAccess(session), [session]);
   const strictSheetSync = false;
 
-  const isTransitioningRef = useRef(false);
-  const closeTimerRef = useRef<number | null>(null);
-  const closeOverlayRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current);
-      if (closeOverlayRef.current) {
-        closeOverlayRef.current.remove();
-        closeOverlayRef.current = null;
-      }
-      isTransitioningRef.current = false;
-    };
-  }, []);
+  const [showPhoto, setShowPhoto] = useState(false);
 
   const handleCloseDeviceModal = useCallback((e?: { preventDefault: () => void; stopPropagation: () => void }) => {
     if (e) {
       e.preventDefault();
       e.stopPropagation();
     }
-    if (deviceModalPortalRef.current) deviceModalPortalRef.current.style.display = 'none';
-    if (isTransitioningRef.current) return;
-    if (!selectedDevice) return;
-    console.log('[device-modal] close', selectedDevice.id);
-    isTransitioningRef.current = true;
-    setIsEditing(false);
-    setModalImageUrl(null);
-    setModalImageTooLarge(false);
-    if (modalImageObjectUrlRef.current) {
-      URL.revokeObjectURL(modalImageObjectUrlRef.current);
-      modalImageObjectUrlRef.current = null;
-    }
-    if (modalImageFetchAbortRef.current) {
-      modalImageFetchAbortRef.current.abort();
-      modalImageFetchAbortRef.current = null;
-    }
-    try {
-      window.stop();
-    } catch {
-      void 0;
-    }
     setSelectedDevice(null);
-
-    if (!closeOverlayRef.current) {
-      const overlay = document.createElement('div');
-      overlay.style.position = 'fixed';
-      overlay.style.inset = '0';
-      overlay.style.zIndex = '99999';
-      overlay.style.background = 'transparent';
-      overlay.style.pointerEvents = 'all';
-      overlay.addEventListener(
-        'pointerdown',
-        (evt) => {
-          evt.preventDefault();
-          evt.stopPropagation();
-        },
-        { capture: true }
-      );
-      overlay.addEventListener(
-        'click',
-        (evt) => {
-          evt.preventDefault();
-          evt.stopPropagation();
-        },
-        { capture: true }
-      );
-      document.documentElement.appendChild(overlay);
-      closeOverlayRef.current = overlay;
-    }
-
-    if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current);
-    closeTimerRef.current = window.setTimeout(() => {
-      isTransitioningRef.current = false;
-      if (closeOverlayRef.current) {
-        closeOverlayRef.current.remove();
-        closeOverlayRef.current = null;
-      }
-    }, 1000);
-  }, [selectedDevice]);
+    setShowPhoto(false);
+    setIsEditing(false);
+  }, []);
 
   const handleDeviceCardClick = useCallback((d: Device, e?: { preventDefault: () => void; stopPropagation: () => void }) => {
     if (e) {
       e.preventDefault();
       e.stopPropagation();
     }
-    if (isTransitioningRef.current || selectedDevice) return;
-    console.log('[device-modal] open', d.id);
-    setSelectedDevice(d);
+    setShowPhoto(false);
     setIsEditing(false);
-  }, [selectedDevice]);
+    setSelectedDevice(d);
+  }, []);
 
   const deviceModalContentRef = useRef<HTMLDivElement | null>(null);
-  const deviceModalPortalRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!selectedDevice) return;
-    const onPointerDownCapture = (evt: PointerEvent) => {
-      if (isTransitioningRef.current) return;
-      const target = evt.target as Node | null;
-      const el = deviceModalContentRef.current;
-      if (!target || !el) return;
-      if (el.contains(target)) return;
-      evt.preventDefault();
-      evt.stopPropagation();
-      handleCloseDeviceModal();
-    };
-
     const onKeyDown = (evt: KeyboardEvent) => {
       if (evt.key !== 'Escape') return;
       evt.preventDefault();
       evt.stopPropagation();
-      if (deviceModalPortalRef.current) deviceModalPortalRef.current.style.display = 'none';
-      try {
-        window.stop();
-      } catch {
-        void 0;
-      }
       handleCloseDeviceModal();
     };
-
-    document.addEventListener('pointerdown', onPointerDownCapture, true);
     document.addEventListener('keydown', onKeyDown, true);
     return () => {
-      document.removeEventListener('pointerdown', onPointerDownCapture, true);
       document.removeEventListener('keydown', onKeyDown, true);
     };
   }, [selectedDevice, handleCloseDeviceModal]);
 
   useEffect(() => {
-    if (selectedDevice) return;
-    setIsEditing(false);
-  }, [selectedDevice]);
+    const id = selectedDevice?.id;
+    if (!id) return;
+    setShowPhoto(false);
+  }, [selectedDevice?.id]);
 
   useEffect(() => {
     if (session?.role === 'admin') {
@@ -2306,7 +2217,7 @@ function App() {
   const modalDevicePhoto = selectedDevice?.photo;
 
   useEffect(() => {
-    if (!modalDeviceId) {
+    if (!modalDeviceId || !showPhoto) {
       if (modalImageFetchAbortRef.current) {
         modalImageFetchAbortRef.current.abort();
         modalImageFetchAbortRef.current = null;
@@ -2370,10 +2281,11 @@ function App() {
       cancelled = true;
       controller.abort();
     };
-  }, [modalDeviceId, modalDevicePhoto]);
+  }, [modalDeviceId, modalDevicePhoto, showPhoto]);
 
   useEffect(() => {
     if (!session) return;
+    if (!showPhoto) return;
     if (!selectedDeviceId) return;
     if (!selectedDevicePhotoR2Key) return;
     if (selectedDeviceHasBlobPhoto) return;
@@ -2447,7 +2359,7 @@ function App() {
       controller.abort();
       if (url) URL.revokeObjectURL(url);
     };
-  }, [selectedDeviceId, selectedDevicePhotoR2Key, selectedDeviceHasBlobPhoto, session]);
+  }, [selectedDeviceId, selectedDevicePhotoR2Key, selectedDeviceHasBlobPhoto, session, showPhoto]);
 
   const importSheetsToDb = useCallback(async () => {
     if (!isAdmin) return;
@@ -3494,12 +3406,18 @@ function App() {
 
       {typeof document !== 'undefined' && selectedDevice
         ? createPortal(
-            <div ref={deviceModalPortalRef} className="fixed inset-0 z-50">
-              <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" />
+            <div className="fixed inset-0 z-50">
+              <div
+                className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+                onMouseDown={(e) => {
+                  if (e.target !== e.currentTarget) return;
+                  handleCloseDeviceModal(e);
+                }}
+              />
 
               <button
                 type="button"
-                onMouseDown={(e) => handleCloseDeviceModal(e)}
+                onClick={(e) => handleCloseDeviceModal(e)}
                 className="absolute top-4 right-4 w-16 h-16 flex items-center justify-center bg-white/90 border border-slate-200 hover:bg-white rounded-2xl z-[9999] cursor-pointer"
                 aria-label="Tutup"
                 style={{ willChange: 'opacity, transform' }}
@@ -3518,25 +3436,54 @@ function App() {
                 >
                   <div className="flex flex-col lg:flex-row">
                     <div className="w-full lg:w-1/2 bg-slate-50 relative min-h-[400px]">
-                      {modalImageUrl ? (
-                        <ImageWithPlaceholder src={modalImageUrl} alt={selectedDevice.name} />
-                      ) : modalImageTooLarge ? (
-                        <div className="w-full h-full flex flex-col items-center justify-center text-rose-500 p-12">
-                          <AlertTriangle className="w-20 h-20 mb-6 opacity-40" />
-                          <p className="text-sm font-black">Foto Terlalu Besar</p>
-                        </div>
-                      ) : selectedDevice?.photoR2Key ? (
-                        <div className="w-full h-full flex flex-col items-center justify-center text-slate-300 p-12">
-                          <Camera className="w-20 h-20 mb-6 opacity-20" />
-                          <p className="text-sm font-bold">Memuat Foto...</p>
-                        </div>
-                      ) : (
-                        <div className="w-full h-full flex flex-col items-center justify-center text-slate-300 p-12">
-                          <Camera className="w-20 h-20 mb-6 opacity-20" />
-                          <p className="text-sm font-bold">Belum Ada Foto</p>
-                        </div>
-                      )}
-                      {isAdmin && (
+                      {(() => {
+                        const hasPhoto = Boolean(selectedDevice.photoR2Key || selectedDevice.photo);
+
+                        if (!showPhoto) {
+                          return (
+                            <div className="w-full h-full flex flex-col items-center justify-center text-slate-400 p-12">
+                              <Camera className="w-20 h-20 mb-6 opacity-20" />
+                              <p className="text-sm font-bold">Foto disembunyikan untuk performa</p>
+                              {hasPhoto ? (
+                                <button
+                                  onClick={() => setShowPhoto(true)}
+                                  className="mt-6 px-6 py-3 bg-slate-900 hover:bg-slate-950 text-white rounded-2xl font-black transition-all"
+                                >
+                                  Lihat Foto
+                                </button>
+                              ) : (
+                                <p className="text-sm font-bold mt-6 text-slate-300">Belum Ada Foto</p>
+                              )}
+                            </div>
+                          );
+                        }
+
+                        if (modalImageUrl) return <ImageWithPlaceholder src={modalImageUrl} alt={selectedDevice.name} />;
+                        if (modalImageTooLarge) {
+                          return (
+                            <div className="w-full h-full flex flex-col items-center justify-center text-rose-500 p-12">
+                              <AlertTriangle className="w-20 h-20 mb-6 opacity-40" />
+                              <p className="text-sm font-black">Foto Terlalu Besar</p>
+                            </div>
+                          );
+                        }
+                        if (hasPhoto) {
+                          return (
+                            <div className="w-full h-full flex flex-col items-center justify-center text-slate-300 p-12">
+                              <Camera className="w-20 h-20 mb-6 opacity-20" />
+                              <p className="text-sm font-bold">Memuat Foto...</p>
+                            </div>
+                          );
+                        }
+                        return (
+                          <div className="w-full h-full flex flex-col items-center justify-center text-slate-300 p-12">
+                            <Camera className="w-20 h-20 mb-6 opacity-20" />
+                            <p className="text-sm font-bold">Belum Ada Foto</p>
+                          </div>
+                        );
+                      })()}
+
+                      {isAdmin && isEditing && (
                         <div className="absolute bottom-8 left-8 right-8 flex gap-3">
                           <label className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl cursor-pointer flex items-center justify-center gap-3 font-bold transition-all">
                             <Upload className="w-5 h-5" />
