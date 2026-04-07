@@ -2147,7 +2147,16 @@ function App() {
     if (isEditing) return;
     const next = devices.find(d => d.id === selectedDevice.id);
     if (!next) return;
-    setSelectedDevice(next);
+    setSelectedDevice(prev => {
+      if (!prev) return next;
+      if (String(prev.id || '').trim() !== String(next.id || '').trim()) return next;
+      return {
+        ...next,
+        photo: prev.photo || next.photo,
+        photoR2Key: next.photoR2Key ?? prev.photoR2Key ?? null,
+        isComplete: next.isComplete || prev.isComplete,
+      };
+    });
   }, [devices, selectedDevice, isEditing]);
 
   const selectedDeviceId = selectedDevice?.id;
@@ -2155,6 +2164,7 @@ function App() {
   const selectedDeviceHasBlobPhoto = !!(selectedDevice?.photo && selectedDevice.photo.startsWith('blob:'));
 
   useEffect(() => {
+    if (!session) return;
     if (!selectedDeviceId) return;
     if (!selectedDevicePhotoR2Key) return;
     if (selectedDeviceHasBlobPhoto) return;
@@ -2162,16 +2172,44 @@ function App() {
     let cancelled = false;
     void (async () => {
       try {
-        const res = await axios.get('/api/public/device-photo', {
-          params: { deviceId: selectedDeviceId },
-          responseType: 'blob',
-          timeout: 20000
-        });
+        const fetchBlob = async () => {
+          const endpoint = session.role === 'admin' ? '/api/admin/device-photo' : '/api/public/device-photo';
+          const res = await axios.get(endpoint, { params: { deviceId: selectedDeviceId }, responseType: 'blob', timeout: 20000 });
+          return res;
+        };
+
+        let res: Awaited<ReturnType<typeof fetchBlob>>;
+        try {
+          res = await fetchBlob();
+        } catch (e) {
+          const err = e as unknown;
+          if (axios.isAxiosError(err) && err.response?.status === 403) {
+            if (session.role === 'admin') {
+              const key = String(window.prompt('Akses foto ditolak. Masukkan ulang Admin API Key:') || '').trim();
+              if (!key) throw err;
+              localStorage.setItem('admin_api_key', key);
+              axios.defaults.headers.common['x-admin-key'] = key;
+              delete axios.defaults.headers.common['x-user-key'];
+              res = await fetchBlob();
+            } else {
+              const key = String(window.prompt('Akses foto ditolak. Masukkan ulang User API Key:') || '').trim();
+              if (!key) throw err;
+              localStorage.setItem('user_api_key', key);
+              axios.defaults.headers.common['x-user-key'] = key;
+              delete axios.defaults.headers.common['x-admin-key'];
+              res = await fetchBlob();
+            }
+          } else {
+            throw err;
+          }
+        }
+
         url = URL.createObjectURL(res.data);
         if (cancelled) {
           URL.revokeObjectURL(url);
           return;
         }
+        setDevices(prev => prev.map(d => (String(d.id || '').trim() === String(selectedDeviceId).trim() ? { ...d, photo: url || undefined, isComplete: true } : d)));
         setSelectedDevice(prev => (prev && prev.id === selectedDeviceId ? { ...prev, photo: url || undefined, isComplete: true } : prev));
       } catch {
         void 0;
@@ -2182,7 +2220,7 @@ function App() {
       cancelled = true;
       if (url) URL.revokeObjectURL(url);
     };
-  }, [selectedDeviceId, selectedDevicePhotoR2Key, selectedDeviceHasBlobPhoto]);
+  }, [selectedDeviceId, selectedDevicePhotoR2Key, selectedDeviceHasBlobPhoto, session]);
 
   const importSheetsToDb = useCallback(async () => {
     if (!isAdmin) return;
