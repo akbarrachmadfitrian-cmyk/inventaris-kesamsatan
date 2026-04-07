@@ -22,6 +22,7 @@ interface Device {
   budgetYear?: string;
   budgetSource?: string;
   serviceHistory?: string;
+  photoR2Key?: string | null;
   photo?: string;
   isComplete: boolean;
   dataComplete: boolean;
@@ -1975,6 +1976,7 @@ function App() {
           budgetYear?: string;
           budgetSource?: string;
           serviceHistory?: string;
+          photoR2Key?: string | null;
         }>;
 
         setDbAvailable(true);
@@ -1997,7 +1999,7 @@ function App() {
 
         const savedPhotos = safeParseJSON<Record<string, string>>(localStorage.getItem('samsat_device_photos'), {});
         const finalDevices: Device[] = typedItemsRaw.map(d => {
-          const photo = savedPhotos[d.id];
+          const photo = d.photoR2Key ? undefined : savedPhotos[d.id];
           const serial = String(d.serialNumber || '').trim();
           const phone = String(d.phoneNumber || '').trim();
           const dataComplete = normalizeFilled(serial) && normalizeFilled(phone);
@@ -2013,8 +2015,9 @@ function App() {
             budgetYear: d.budgetYear || '',
             budgetSource: d.budgetSource || '',
             serviceHistory: d.serviceHistory || '',
+            photoR2Key: d.photoR2Key ?? null,
             photo,
-            isComplete: !!photo,
+            isComplete: !!photo || !!d.photoR2Key,
             dataComplete,
             samsat: d.samsat,
             serviceUnit: d.serviceUnit,
@@ -2147,6 +2150,40 @@ function App() {
     setSelectedDevice(next);
   }, [devices, selectedDevice, isEditing]);
 
+  const selectedDeviceId = selectedDevice?.id;
+  const selectedDevicePhotoR2Key = selectedDevice?.photoR2Key;
+  const selectedDeviceHasBlobPhoto = !!(selectedDevice?.photo && selectedDevice.photo.startsWith('blob:'));
+
+  useEffect(() => {
+    if (!selectedDeviceId) return;
+    if (!selectedDevicePhotoR2Key) return;
+    if (selectedDeviceHasBlobPhoto) return;
+    let url: string | null = null;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await axios.get('/api/public/device-photo', {
+          params: { deviceId: selectedDeviceId },
+          responseType: 'blob',
+          timeout: 20000
+        });
+        url = URL.createObjectURL(res.data);
+        if (cancelled) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        setSelectedDevice(prev => (prev && prev.id === selectedDeviceId ? { ...prev, photo: url || undefined, isComplete: true } : prev));
+      } catch {
+        void 0;
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [selectedDeviceId, selectedDevicePhotoR2Key, selectedDeviceHasBlobPhoto]);
+
   const importSheetsToDb = useCallback(async () => {
     if (!isAdmin) return;
     setLoading(true);
@@ -2188,6 +2225,36 @@ function App() {
     }
     const file = e.target.files?.[0];
     if (file) {
+      if (dbAvailable) {
+        const doUpload = async () => {
+          const form = new FormData();
+          form.append('action', 'upload');
+          form.append('deviceId', deviceId);
+          form.append('file', file);
+          const res = await axios.post('/api/admin/device-photo', form, { timeout: 60000 });
+          return res.data as { photoR2Key?: string | null };
+        };
+
+        void (async () => {
+          try {
+            const out = await doUpload();
+            const savedPhotos = safeParseJSON<Record<string, string>>(localStorage.getItem('samsat_device_photos'), {});
+            if (savedPhotos[deviceId]) {
+              delete savedPhotos[deviceId];
+              localStorage.setItem('samsat_device_photos', JSON.stringify(savedPhotos));
+            }
+
+            const url = URL.createObjectURL(file);
+            setDevices(prev => prev.map(d => (d.id === deviceId ? { ...d, photoR2Key: out.photoR2Key ?? d.photoR2Key ?? null, photo: url, isComplete: true } : d)));
+            setSelectedDevice(prev => (prev && prev.id === deviceId ? { ...prev, photoR2Key: out.photoR2Key ?? prev.photoR2Key ?? null, photo: url, isComplete: true } : prev));
+            await fetchData();
+          } catch {
+            window.alert('Gagal upload foto ke database sistem.');
+          }
+        })();
+        return;
+      }
+
       const reader = new FileReader();
       reader.onloadend = () => {
         const base64String = reader.result as string;
@@ -2200,6 +2267,34 @@ function App() {
       };
       reader.readAsDataURL(file);
     }
+  };
+
+  const handlePhotoDelete = (deviceId: string) => {
+    if (!isAdmin) return;
+    const ok = window.confirm('Hapus foto perangkat ini?');
+    if (!ok) return;
+
+    if (dbAvailable) {
+      void (async () => {
+        try {
+          await axios.post('/api/admin/device-photo', { action: 'delete', deviceId }, { timeout: 20000 });
+          setDevices(prev => prev.map(d => (d.id === deviceId ? { ...d, photoR2Key: null, photo: undefined, isComplete: false } : d)));
+          setSelectedDevice(prev => (prev && prev.id === deviceId ? { ...prev, photoR2Key: null, photo: undefined, isComplete: false } : prev));
+          await fetchData();
+        } catch {
+          window.alert('Gagal menghapus foto di database sistem.');
+        }
+      })();
+      return;
+    }
+
+    const savedPhotos = safeParseJSON<Record<string, string>>(localStorage.getItem('samsat_device_photos'), {});
+    if (savedPhotos[deviceId]) {
+      delete savedPhotos[deviceId];
+      localStorage.setItem('samsat_device_photos', JSON.stringify(savedPhotos));
+    }
+    setDevices(prev => prev.map(d => (d.id === deviceId ? { ...d, photo: undefined, isComplete: false } : d)));
+    setSelectedDevice(prev => (prev && prev.id === deviceId ? { ...prev, photo: undefined, isComplete: false } : prev));
   };
 
   const handleUpdateDevice = async () => {
@@ -3099,11 +3194,21 @@ function App() {
                     </div>
                   )}
                   {isAdmin && (
-                    <label className="absolute bottom-8 left-8 right-8 bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl cursor-pointer flex items-center justify-center gap-3 font-bold transition-all">
-                      <Upload className="w-5 h-5" />
-                      <span>Upload Foto</span>
-                      <input type="file" className="hidden" accept="image/*" onChange={(e) => handlePhotoUpload(selectedDevice.id, e)} />
-                    </label>
+                    <div className="absolute bottom-8 left-8 right-8 flex gap-3">
+                      <label className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl cursor-pointer flex items-center justify-center gap-3 font-bold transition-all">
+                        <Upload className="w-5 h-5" />
+                        <span>Upload Foto</span>
+                        <input type="file" className="hidden" accept="image/*" onChange={(e) => handlePhotoUpload(selectedDevice.id, e)} />
+                      </label>
+                      {(selectedDevice.photo || selectedDevice.photoR2Key) && (
+                        <button
+                          onClick={() => handlePhotoDelete(selectedDevice.id)}
+                          className="px-5 bg-white border border-slate-200 hover:bg-rose-50 text-rose-600 py-4 rounded-2xl font-black transition-all"
+                        >
+                          Hapus
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
                 <div className="w-full lg:w-1/2 p-12 overflow-y-auto max-h-[80vh]">
