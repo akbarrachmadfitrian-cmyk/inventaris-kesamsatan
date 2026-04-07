@@ -852,15 +852,38 @@ function App() {
   const accountAccess = useMemo(() => getAccountAccess(session), [session]);
   const strictSheetSync = false;
 
-  const deviceModalClosingRef = useRef(false);
-  const closeDeviceModal = useCallback(() => {
-    deviceModalClosingRef.current = true;
-    setIsEditing(false);
-    setSelectedDevice(null);
-    window.setTimeout(() => {
-      deviceModalClosingRef.current = false;
-    }, 250);
+  const [isClosing, setIsClosing] = useState(false);
+  const closeTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current);
+    };
   }, []);
+
+  const handleCloseDeviceModal = useCallback((e?: { preventDefault: () => void; stopPropagation: () => void }) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    if (isClosing) return;
+    if (!selectedDevice) return;
+    console.log('[device-modal] close', selectedDevice.id);
+    setIsEditing(false);
+    setIsClosing(true);
+    if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = window.setTimeout(() => {
+      setSelectedDevice(null);
+      setIsClosing(false);
+    }, 300);
+  }, [isClosing, selectedDevice]);
+
+  const handleDeviceCardClick = useCallback((d: Device) => {
+    if (isClosing) return;
+    console.log('[device-modal] open', d.id);
+    setSelectedDevice(d);
+    setIsEditing(false);
+  }, [isClosing]);
 
   useEffect(() => {
     if (session?.role === 'admin') {
@@ -2839,7 +2862,7 @@ function App() {
   return (
     <div className="min-h-[100dvh] bg-[#F8FAFC] text-[#1E293B] font-sans flex flex-col lg:flex-row overflow-x-hidden lg:overflow-hidden">
       {/* Sidebar */}
-      <aside className="w-full lg:w-72 bg-white border-b lg:border-b-0 lg:border-r border-slate-200 flex flex-col z-40 shrink-0">
+      <aside className={`w-full lg:w-72 bg-white border-b lg:border-b-0 lg:border-r border-slate-200 flex flex-col z-40 shrink-0 ${selectedDevice || isClosing ? 'pointer-events-none' : ''}`}>
         <div className="p-4 sm:p-6 flex flex-col items-center gap-3 border-b border-slate-50">
           <img
             src="https://bapenda.kalselprov.go.id/wp-content/uploads/2025/08/Logo-Sayembara-Bapenda.png?v=20250823"
@@ -3024,7 +3047,7 @@ function App() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-grow lg:overflow-y-auto">
+      <main className={`flex-grow lg:overflow-y-auto ${selectedDevice || isClosing ? 'pointer-events-none' : ''}`}>
         <header className="p-4 sm:p-8 pb-3 sm:pb-4">
           <h2 className="text-xl sm:text-2xl font-black text-slate-900 mb-1">
             {viewMode === 'selection' ? 'Daftar Kantor Samsat' : viewMode === 'scan-qr' ? 'Scan QR' : 'Dashboard'}
@@ -3250,8 +3273,7 @@ function App() {
                   <motion.div 
                     key={d.id}
                     onClick={() => {
-                      if (deviceModalClosingRef.current) return;
-                      setSelectedDevice(d);
+                      handleDeviceCardClick(d);
                     }}
                     className="bg-white border border-slate-100 rounded-3xl p-6 shadow-sm hover:shadow-md transition-all cursor-pointer group"
                   >
@@ -3263,9 +3285,7 @@ function App() {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (deviceModalClosingRef.current) return;
-                            setSelectedDevice(d);
-                            setIsEditing(false);
+                            handleDeviceCardClick(d);
                           }}
                           className="px-3 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-black transition-colors"
                         >
@@ -3303,31 +3323,38 @@ function App() {
         {selectedDevice && (
           <div
             className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm"
-            onClick={(e) => {
+            onPointerDownCapture={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
               if (e.target !== e.currentTarget) return;
-              closeDeviceModal();
+              handleCloseDeviceModal();
+            }}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (e.target !== e.currentTarget) return;
+              handleCloseDeviceModal();
             }}
           >
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-[3rem] w-full max-w-4xl overflow-hidden shadow-2xl relative"
-              onClick={(e) => e.stopPropagation()}
+              className={`bg-white rounded-[3rem] w-full max-w-4xl overflow-hidden shadow-2xl relative ${isClosing ? 'pointer-events-none' : ''}`}
+              onPointerDownCapture={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
             >
               <button
                 type="button"
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  closeDeviceModal();
-                }}
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  closeDeviceModal();
-                }}
-                className="absolute top-8 right-8 p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl z-[60] cursor-pointer"
+                onPointerDownCapture={(e) => handleCloseDeviceModal(e)}
+                onClick={(e) => handleCloseDeviceModal(e)}
+                className="absolute top-6 right-6 w-12 h-12 flex items-center justify-center bg-slate-50 hover:bg-slate-100 rounded-2xl z-[70] cursor-pointer"
                 aria-label="Tutup"
               >
                 <XCircle className="w-6 h-6 text-slate-400" />
@@ -3550,9 +3577,7 @@ function App() {
                         key={d.id}
                         onClick={() => {
                           setIsDashboardDevicesModalOpen(false);
-                          if (deviceModalClosingRef.current) return;
-                          setSelectedDevice(d);
-                          setIsEditing(false);
+                          handleDeviceCardClick(d);
                         }}
                         className="w-full text-left p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-slate-50 transition-colors"
                       >
