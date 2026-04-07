@@ -2269,6 +2269,103 @@ function App() {
     }
   }, [fetchData, isAdmin]);
 
+  const [compressProgress, setCompressProgress] = useState<{ current: number; total: number; status: string } | null>(null);
+
+  const compressAllPhotos = useCallback(async () => {
+    if (!isAdmin) return;
+    if (!window.confirm('Kompres semua foto di database?\n\nProses ini akan:\n- Mengunduh setiap foto\n- Mengompres ke max 800px, JPEG 55%\n- Upload ulang yang lebih kecil\n\nFoto yang sudah kecil (<100KB) akan dilewati.\nProses bisa memakan waktu beberapa menit.')) return;
+
+    try {
+      setCompressProgress({ current: 0, total: 0, status: 'Memuat daftar foto...' });
+      const listRes = await axios.get('/api/admin/device-photo', { params: { action: 'list-photos' }, timeout: 30000 });
+      const items = (listRes.data as { items: { id: string; photoSizeBytes: number }[] }).items || [];
+
+      // Filter: hanya proses foto yang > 100KB base64 (~ > 75KB binary)
+      const toProcess = items.filter(i => i.photoSizeBytes > 100_000);
+      if (toProcess.length === 0) {
+        setCompressProgress(null);
+        window.alert(`Semua ${items.length} foto sudah optimal. Tidak perlu kompresi.`);
+        return;
+      }
+
+      setCompressProgress({ current: 0, total: toProcess.length, status: `${toProcess.length} foto perlu dikompres (dari ${items.length} total)` });
+
+      let compressed = 0;
+      let skipped = 0;
+      let failed = 0;
+
+      for (let i = 0; i < toProcess.length; i++) {
+        const item = toProcess[i];
+        setCompressProgress({ current: i + 1, total: toProcess.length, status: `Memproses ${item.id} (${i + 1}/${toProcess.length})` });
+
+        try {
+          // 1. Download foto via API yang sudah ada
+          const photoRes = await axios.get('/api/admin/device-photo', {
+            params: { deviceId: item.id },
+            responseType: 'blob',
+            timeout: 60000,
+          });
+
+          const originalBlob = photoRes.data as Blob;
+          const originalSize = originalBlob.size;
+
+          // 2. Load ke Image + Canvas
+          const blobUrl = URL.createObjectURL(originalBlob);
+          try {
+            const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+              const el = new Image();
+              el.onload = () => resolve(el);
+              el.onerror = () => reject(new Error('Gagal load'));
+              el.src = blobUrl;
+            });
+
+            const maxDim = 800;
+            const w = Math.max(1, img.naturalWidth || img.width || 1);
+            const h = Math.max(1, img.naturalHeight || img.height || 1);
+            const scale = Math.min(1, maxDim / Math.max(w, h));
+            const outW = Math.max(1, Math.round(w * scale));
+            const outH = Math.max(1, Math.round(h * scale));
+
+            const canvas = document.createElement('canvas');
+            canvas.width = outW;
+            canvas.height = outH;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) { skipped++; continue; }
+            ctx.drawImage(img, 0, 0, outW, outH);
+
+            const compressedBlob = await new Promise<Blob | null>(resolve =>
+              canvas.toBlob(resolve, 'image/jpeg', 0.55)
+            );
+
+            if (!compressedBlob || compressedBlob.size >= originalSize) {
+              skipped++;
+              continue;
+            }
+
+            // 3. Re-upload via API yang sudah ada
+            const form = new FormData();
+            form.append('action', 'upload');
+            form.append('deviceId', item.id);
+            form.append('file', new File([compressedBlob], 'photo.jpg', { type: 'image/jpeg' }));
+            await axios.post('/api/admin/device-photo', form, { timeout: 60000 });
+
+            compressed++;
+          } finally {
+            URL.revokeObjectURL(blobUrl);
+          }
+        } catch {
+          failed++;
+        }
+      }
+
+      setCompressProgress(null);
+      window.alert(`Kompresi selesai!\n\n✅ Dikompres: ${compressed}\n⏭️ Dilewati (sudah kecil): ${skipped}\n❌ Gagal: ${failed}`);
+    } catch {
+      setCompressProgress(null);
+      window.alert('Gagal memulai kompresi. Cek koneksi dan API key.');
+    }
+  }, [isAdmin]);
+
   useEffect(() => {
     if (!session) return;
     fetchData();
@@ -2877,6 +2974,34 @@ function App() {
                   </button>
                 </div>
               ) : null}
+              {isAdmin && dbAvailable && (
+                <div className="bg-slate-50 border border-slate-100 rounded-[2rem] p-6">
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div>
+                      <p className="text-sm font-black text-slate-900">Kompres Foto Database</p>
+                      <p className="text-xs font-bold text-slate-500 mt-1">Kompres foto perangkat yang tersimpan di D1 agar loading lebih cepat (max 800px, JPEG 55%).</p>
+                    </div>
+                    <button
+                      onClick={compressAllPhotos}
+                      disabled={loading || !!compressProgress}
+                      className="px-6 py-3 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-black text-sm disabled:bg-slate-200 disabled:text-slate-500 whitespace-nowrap"
+                    >
+                      {compressProgress ? 'Sedang Memproses...' : 'Kompres Foto'}
+                    </button>
+                  </div>
+                  {compressProgress && (
+                    <div className="mt-4">
+                      <div className="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
+                        <div
+                          className="bg-blue-500 h-3 rounded-full transition-all duration-300"
+                          style={{ width: compressProgress.total > 0 ? `${Math.round((compressProgress.current / compressProgress.total) * 100)}%` : '0%' }}
+                        />
+                      </div>
+                      <p className="text-xs font-bold text-slate-500 mt-2">{compressProgress.status}</p>
+                    </div>
+                  )}
+                </div>
+              )}
               {visibleSamsatList.length > 0 ? (
                 <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
                   {visibleSamsatList.map((samsat, i) => (

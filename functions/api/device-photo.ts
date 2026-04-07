@@ -91,6 +91,22 @@ export async function onRequestGet({ request, env }: { request: Request; env: En
   if (!env.DB) return json({ error: 'DB belum dikonfigurasi' }, { status: 500 })
 
   const url = new URL(request.url)
+  const action = String(url.searchParams.get('action') || '').trim()
+
+  // List semua device yang punya foto beserta ukuran base64
+  if (action === 'list-photos') {
+    const withPhotoDataUrl = await hasPhotoDataUrlColumn(env.DB)
+    if (!withPhotoDataUrl) return json({ items: [] }, { status: 200 })
+    const rows = await env.DB
+      .prepare("SELECT id, LENGTH(photo_data_url) as photo_size FROM devices WHERE deleted_at IS NULL AND photo_data_url IS NOT NULL AND photo_data_url != ''")
+      .all<Record<string, unknown>>()
+    const items = rows.results.map(r => ({
+      id: String(r.id || ''),
+      photoSizeBytes: Number(r.photo_size || 0),
+    }))
+    return json({ items }, { status: 200 })
+  }
+
   const deviceId = String(url.searchParams.get('deviceId') || '').trim()
   if (!deviceId) return json({ error: 'deviceId wajib diisi' }, { status: 400 })
 
