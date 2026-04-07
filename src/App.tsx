@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import axios from 'axios'
+import { createPortal } from 'react-dom'
 import { QRCodeSVG } from 'qrcode.react'
 import { 
   Camera, Upload, CheckCircle2, QrCode, Search, RefreshCw,
@@ -29,6 +30,35 @@ interface Device {
   samsat: string;
   serviceUnit: string;
   sheetName: string;
+}
+
+const ImageWithPlaceholder = ({ src, alt }: { src: string; alt: string }) => {
+  const [ready, setReady] = useState(false)
+
+  useEffect(() => {
+    setReady(false)
+  }, [src])
+
+  return (
+    <div className="w-full h-full relative bg-slate-50 transform-gpu">
+      {!ready ? (
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-300 p-12 pointer-events-none">
+          <Camera className="w-20 h-20 mb-6 opacity-20" />
+          <p className="text-sm font-bold">Memuat Foto...</p>
+        </div>
+      ) : null}
+      <img
+        src={src}
+        alt={alt}
+        loading="lazy"
+        decoding="async"
+        onLoad={() => setReady(true)}
+        onError={() => setReady(true)}
+        className={`w-full h-full ${ready ? 'opacity-100' : 'opacity-0'} transition-opacity duration-200`}
+        style={{ objectFit: 'contain' }}
+      />
+    </div>
+  )
 }
 
 interface Stats {
@@ -884,6 +914,36 @@ function App() {
     setSelectedDevice(d);
     setIsEditing(false);
   }, [isClosing]);
+
+  const deviceModalContentRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!selectedDevice) return;
+    const onPointerDownCapture = (evt: PointerEvent) => {
+      if (isClosing) return;
+      const target = evt.target as Node | null;
+      const el = deviceModalContentRef.current;
+      if (!target || !el) return;
+      if (el.contains(target)) return;
+      evt.preventDefault();
+      evt.stopPropagation();
+      handleCloseDeviceModal();
+    };
+
+    const onKeyDown = (evt: KeyboardEvent) => {
+      if (evt.key !== 'Escape') return;
+      evt.preventDefault();
+      evt.stopPropagation();
+      handleCloseDeviceModal();
+    };
+
+    document.addEventListener('pointerdown', onPointerDownCapture, true);
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDownCapture, true);
+      document.removeEventListener('keydown', onKeyDown, true);
+    };
+  }, [selectedDevice, isClosing, handleCloseDeviceModal]);
 
   useEffect(() => {
     if (session?.role === 'admin') {
@@ -3318,98 +3378,85 @@ function App() {
         </div>
       </main>
 
-      {/* Detail Modal */}
-      <AnimatePresence>
-        {selectedDevice && (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm"
-            onPointerDownCapture={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              if (e.target !== e.currentTarget) return;
-              handleCloseDeviceModal();
-            }}
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              if (e.target !== e.currentTarget) return;
-              handleCloseDeviceModal();
-            }}
-          >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className={`bg-white rounded-[3rem] w-full max-w-4xl overflow-hidden shadow-2xl relative ${isClosing ? 'pointer-events-none' : ''}`}
+      {typeof document !== 'undefined' && selectedDevice
+        ? createPortal(
+            <div
+              className={`fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm ${isClosing ? 'pointer-events-none' : ''}`}
               onPointerDownCapture={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
+                if (e.target !== e.currentTarget) return
+                handleCloseDeviceModal(e)
               }}
               onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
+                if (e.target !== e.currentTarget) return
+                handleCloseDeviceModal(e)
               }}
             >
-              <button
-                type="button"
-                onPointerDownCapture={(e) => handleCloseDeviceModal(e)}
-                onClick={(e) => handleCloseDeviceModal(e)}
-                className="absolute top-6 right-6 w-12 h-12 flex items-center justify-center bg-slate-50 hover:bg-slate-100 rounded-2xl z-[70] cursor-pointer"
-                aria-label="Tutup"
+              <motion.div
+                ref={deviceModalContentRef}
+                initial={{ opacity: 0, scale: 0.98 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.98 }}
+                className="bg-white rounded-[3rem] w-full max-w-4xl overflow-hidden shadow-2xl relative transform-gpu"
+                style={{ transform: 'translateZ(0)', willChange: 'transform' }}
               >
-                <XCircle className="w-6 h-6 text-slate-400" />
-              </button>
-              <div className="flex flex-col lg:flex-row">
-                <div className="w-full lg:w-1/2 bg-slate-50 relative min-h-[400px]">
-                  {selectedDevice.photo ? (
-                    <img src={selectedDevice.photo} alt={selectedDevice.name} className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="w-full h-full flex flex-col items-center justify-center text-slate-300 p-12">
-                      <Camera className="w-20 h-20 mb-6 opacity-20" />
-                      <p className="text-sm font-bold">Belum Ada Foto</p>
-                    </div>
-                  )}
-                  {isAdmin && (
-                    <div className="absolute bottom-8 left-8 right-8 flex gap-3">
-                      <label className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl cursor-pointer flex items-center justify-center gap-3 font-bold transition-all">
-                        <Upload className="w-5 h-5" />
-                        <span>Upload Foto</span>
-                        <input type="file" className="hidden" accept="image/*" onChange={(e) => handlePhotoUpload(selectedDevice.id, e)} />
-                      </label>
-                      {(selectedDevice.photo || selectedDevice.photoR2Key) && (
-                        <button
-                          onClick={() => handlePhotoDelete(selectedDevice.id)}
-                          className="px-5 bg-white border border-slate-200 hover:bg-rose-50 text-rose-600 py-4 rounded-2xl font-black transition-all"
-                        >
-                          Hapus
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-                <div className="w-full lg:w-1/2 p-12 overflow-y-auto max-h-[80vh]">
-                  <div className="mb-8">
-                    <h3 className="text-3xl font-black text-slate-900 text-center">
-                      {isEditing ? 'Edit Perangkat' : selectedDevice.name}
-                    </h3>
-                    {!isEditing && isAdmin && !strictSheetSync && (
-                      <div className="mt-5 flex justify-center">
-                        <button
-                          onClick={() => {
-                            setIsEditing(true);
-                            setEditForm({
-                              ...selectedDevice,
-                              condition: normalizeCondition(selectedDevice.condition),
-                              budgetSource: selectedDevice.budgetSource || 'APBD'
-                            });
-                          }}
-                          className="px-10 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black tracking-wider transition-all shadow-lg shadow-blue-200"
-                        >
-                          EDIT
-                        </button>
+                <button
+                  type="button"
+                  onPointerDownCapture={(e) => handleCloseDeviceModal(e)}
+                  onClick={(e) => handleCloseDeviceModal(e)}
+                  className="absolute top-6 right-6 w-12 h-12 flex items-center justify-center bg-slate-50 hover:bg-slate-100 rounded-2xl z-[70] cursor-pointer"
+                  aria-label="Tutup"
+                >
+                  <XCircle className="w-6 h-6 text-slate-400" />
+                </button>
+                <div className="flex flex-col lg:flex-row">
+                  <div className="w-full lg:w-1/2 bg-slate-50 relative min-h-[400px]">
+                    {selectedDevice.photo ? <ImageWithPlaceholder src={selectedDevice.photo} alt={selectedDevice.name} /> : (
+                      <div className="w-full h-full flex flex-col items-center justify-center text-slate-300 p-12">
+                        <Camera className="w-20 h-20 mb-6 opacity-20" />
+                        <p className="text-sm font-bold">Belum Ada Foto</p>
+                      </div>
+                    )}
+                    {isAdmin && (
+                      <div className="absolute bottom-8 left-8 right-8 flex gap-3">
+                        <label className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl cursor-pointer flex items-center justify-center gap-3 font-bold transition-all">
+                          <Upload className="w-5 h-5" />
+                          <span>Upload Foto</span>
+                          <input type="file" className="hidden" accept="image/*" onChange={(e) => handlePhotoUpload(selectedDevice.id, e)} />
+                        </label>
+                        {(selectedDevice.photo || selectedDevice.photoR2Key) && (
+                          <button
+                            onClick={() => handlePhotoDelete(selectedDevice.id)}
+                            className="px-5 bg-white border border-slate-200 hover:bg-rose-50 text-rose-600 py-4 rounded-2xl font-black transition-all"
+                          >
+                            Hapus
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
+                  <div className="w-full lg:w-1/2 p-12 overflow-y-auto max-h-[80vh]">
+                    <div className="mb-8">
+                      <h3 className="text-3xl font-black text-slate-900 text-center">
+                        {isEditing ? 'Edit Perangkat' : selectedDevice.name}
+                      </h3>
+                      {!isEditing && isAdmin && !strictSheetSync && (
+                        <div className="mt-5 flex justify-center">
+                          <button
+                            onClick={() => {
+                              setIsEditing(true);
+                              setEditForm({
+                                ...selectedDevice,
+                                condition: normalizeCondition(selectedDevice.condition),
+                                budgetSource: selectedDevice.budgetSource || 'APBD'
+                              });
+                            }}
+                            className="px-10 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black tracking-wider transition-all shadow-lg shadow-blue-200"
+                          >
+                            EDIT
+                          </button>
+                        </div>
+                      )}
+                    </div>
 
                   {isEditing ? (
                     <div className="space-y-6">
@@ -3547,10 +3594,11 @@ function App() {
                   )}
                 </div>
               </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+              </motion.div>
+            </div>,
+            document.body
+          )
+        : null}
 
       <AnimatePresence>
         {isDashboardDevicesModalOpen && (
