@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { motion } from 'framer-motion';
 import { Camera, Upload, AlertTriangle, XCircle, Printer, CheckCircle2, Pencil, Trash2 } from 'lucide-react';
@@ -47,54 +47,61 @@ export function DeviceDetailModal({
   handleDeviceDelete,
   normalizeCondition
 }: DeviceDetailModalProps) {
+  // ESC key listener — global document level, paling reliable
+  useEffect(() => {
+    if (!selectedDevice) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        handleCloseDeviceModal();
+      }
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [selectedDevice, handleCloseDeviceModal]);
+
+  // Fungsi close yang aman — pakai requestAnimationFrame untuk 
+  // memastikan event selesai sebelum portal dihapus
+  const safeClose = useCallback((e?: React.MouseEvent | React.PointerEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.nativeEvent?.stopImmediatePropagation?.();
+    }
+    // Delay 1 frame agar event saat ini selesai, mencegah ghost click
+    requestAnimationFrame(() => {
+      handleCloseDeviceModal();
+    });
+  }, [handleCloseDeviceModal]);
+
   if (typeof document === 'undefined' || !selectedDevice) return null;
 
   return createPortal(
-    <div
-      className="fixed inset-0 z-50"
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          e.stopPropagation();
-          handleCloseDeviceModal();
-        }
-      }}
-      tabIndex={-1}
-      ref={(el) => el?.focus()}
-    >
+    <div className="fixed inset-0 z-50" style={{ isolation: 'isolate' }}>
       {/* Backdrop — klik untuk tutup */}
       <div
         className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          handleCloseDeviceModal();
-        }}
+        onMouseDown={(e) => safeClose(e)}
       />
 
-      {/* Content layer — pointer-events-none agar klik tembus ke backdrop */}
+      {/* Content layer */}
       <div className="absolute inset-0 flex items-center justify-center p-4 pointer-events-none">
         {/* Tombol X */}
         <button
           type="button"
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            handleCloseDeviceModal();
-          }}
+          onMouseDown={(e) => safeClose(e)}
           className="absolute top-4 right-4 w-16 h-16 flex items-center justify-center bg-white/90 border border-slate-200 hover:bg-white rounded-2xl z-[9999] cursor-pointer shadow-lg pointer-events-auto"
           aria-label="Tutup"
         >
           <XCircle className="w-7 h-7 text-slate-600" />
         </button>
 
-        {/* Modal card — pointer-events-auto agar konten bisa diklik */}
+        {/* Modal card */}
         <motion.div
           initial={{ opacity: 0, scale: 0.98 }}
           animate={{ opacity: 1, scale: 1 }}
-          exit={{ opacity: 0, scale: 0.98 }}
           className="bg-white rounded-[3rem] w-full max-w-4xl overflow-hidden shadow-2xl relative transform-gpu pointer-events-auto"
-          style={{ transform: 'translateZ(0)', willChange: 'transform' }}
         >
           <div className="flex flex-col lg:flex-row">
             <div className="w-full lg:w-1/2 bg-slate-50 relative min-h-[400px]">
@@ -195,7 +202,7 @@ export function DeviceDetailModal({
                       type="text" 
                       value={editForm.name || ''} 
                       onChange={(e) => setEditForm(prev => ({...prev, name: e.target.value}))}
-                      className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold focus:ring-2 focus:ring-blue-500/20 outline-none"
+                      className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-900 focus:ring-2 focus:ring-blue-500/20 outline-none"
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
@@ -205,7 +212,7 @@ export function DeviceDetailModal({
                         type="text" 
                         value={editForm.subLocation || ''} 
                         onChange={(e) => setEditForm(prev => ({...prev, subLocation: e.target.value}))}
-                        className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold focus:ring-2 focus:ring-blue-500/20 outline-none"
+                        className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-900 focus:ring-2 focus:ring-blue-500/20 outline-none"
                       />
                     </div>
                     <div>
@@ -214,7 +221,7 @@ export function DeviceDetailModal({
                         type="text" 
                         value={editForm.phoneNumber || ''} 
                         onChange={(e) => setEditForm(prev => ({...prev, phoneNumber: e.target.value}))}
-                        className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold focus:ring-2 focus:ring-blue-500/20 outline-none"
+                        className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-900 focus:ring-2 focus:ring-blue-500/20 outline-none"
                       />
                     </div>
                   </div>
@@ -224,7 +231,7 @@ export function DeviceDetailModal({
                       type="text" 
                       value={editForm.serialNumber || ''} 
                       onChange={(e) => setEditForm(prev => ({...prev, serialNumber: e.target.value}))}
-                      className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold focus:ring-2 focus:ring-blue-500/20 outline-none"
+                      className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-900 focus:ring-2 focus:ring-blue-500/20 outline-none"
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
@@ -234,7 +241,7 @@ export function DeviceDetailModal({
                         type="text" 
                         value={editForm.budgetYear || ''} 
                         onChange={(e) => setEditForm(prev => ({...prev, budgetYear: e.target.value}))}
-                        className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold focus:ring-2 focus:ring-blue-500/20 outline-none"
+                        className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-900 focus:ring-2 focus:ring-blue-500/20 outline-none"
                       />
                     </div>
                     <div>
@@ -242,7 +249,7 @@ export function DeviceDetailModal({
                       <select
                         value={editForm.budgetSource || 'APBD'}
                         onChange={(e) => setEditForm(prev => ({...prev, budgetSource: e.target.value}))}
-                        className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold focus:ring-2 focus:ring-blue-500/20 outline-none appearance-none"
+                        className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-900 focus:ring-2 focus:ring-blue-500/20 outline-none appearance-none"
                       >
                         <option value="APBD">APBD</option>
                         <option value="KORLANTAS / APBN">KORLANTAS / APBN</option>
@@ -256,7 +263,7 @@ export function DeviceDetailModal({
                     <select
                       value={editForm.condition || 'Baik'}
                       onChange={(e) => setEditForm(prev => ({...prev, condition: e.target.value}))}
-                      className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold focus:ring-2 focus:ring-blue-500/20 outline-none appearance-none"
+                      className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-900 focus:ring-2 focus:ring-blue-500/20 outline-none appearance-none"
                     >
                       <option value="Baik">Baik</option>
                       <option value="Kurang Baik">Kurang Baik</option>
@@ -268,7 +275,7 @@ export function DeviceDetailModal({
                     <textarea 
                       value={editForm.serviceHistory || ''} 
                       onChange={(e) => setEditForm(prev => ({...prev, serviceHistory: e.target.value}))}
-                      className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold focus:ring-2 focus:ring-blue-500/20 outline-none min-h-[100px] resize-y"
+                      className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-900 focus:ring-2 focus:ring-blue-500/20 outline-none min-h-[100px] resize-y"
                       placeholder="Catatan servis, contoh: 12/03/2026 - Ganti RAM"
                     />
                   </div>
