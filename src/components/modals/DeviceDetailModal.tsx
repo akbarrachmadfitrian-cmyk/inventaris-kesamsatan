@@ -222,14 +222,25 @@ export function DeviceDetailModal({
                       />
                     </div>
                   </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Serial Number</label>
-                    <input 
-                      type="text" 
-                      value={editForm.serialNumber || ''} 
-                      onChange={(e) => setEditForm(prev => ({...prev, serialNumber: e.target.value}))}
-                      className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-900 focus:ring-2 focus:ring-blue-500/20 outline-none"
-                    />
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Serial Number</label>
+                      <input 
+                        type="text" 
+                        value={editForm.serialNumber || ''} 
+                        onChange={(e) => setEditForm(prev => ({...prev, serialNumber: e.target.value}))}
+                        className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-900 focus:ring-2 focus:ring-blue-500/20 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Jenis Layanan</label>
+                      <input 
+                        type="text" 
+                        value={editForm.serviceUnit || ''} 
+                        onChange={(e) => setEditForm(prev => ({...prev, serviceUnit: e.target.value}))}
+                        className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-900 focus:ring-2 focus:ring-blue-500/20 outline-none"
+                      />
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
