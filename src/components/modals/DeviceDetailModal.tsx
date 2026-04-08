@@ -260,9 +260,8 @@ export function DeviceDetailModal({
                         className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-900 focus:ring-2 focus:ring-blue-500/20 outline-none appearance-none"
                       >
                         <option value="APBD">APBD</option>
-                        <option value="KORLANTAS / APBN">KORLANTAS / APBN</option>
-                        <option value="HIBAH">HIBAH</option>
-                        <option value="JASA RAHARJA">JASA RAHARJA</option>
+                        <option value="HIBAH BANK KALSEL">HIBAH BANK KALSEL</option>
+                        <option value="COST SHARING KAB/KOTA">COST SHARING KAB/KOTA</option>
                       </select>
                     </div>
                   </div>
