@@ -80,6 +80,13 @@ const normalizeCondition = (raw: string) => {
   return 'Kurang Baik'
 }
 
+const normalizeSamsatName = (raw: string) => {
+  const s = String(raw || '').trim().toUpperCase()
+  if (s === 'SAMSAT BANJARMASIN 1') return 'SAMSAT BANJARMASIN I'
+  if (s === 'SAMSAT BANJARMASIN 2') return 'SAMSAT BANJARMASIN II'
+  return s
+}
+
 const parseCsvLine = (line: string, separator: string) => {
   const cells: string[] = []
   let current = ''
@@ -146,7 +153,7 @@ const parseSheetCSV = (csvData: string, defaultSamsat: string): DeviceRow[] => {
         let name = (cells[0] || '').trim()
         name = name.replace(/UPPD\s+/gi, '').trim()
         name = name.replace(/^SAMSAT\s+/gi, '').trim()
-        currentSamsat = 'SAMSAT ' + name
+        currentSamsat = normalizeSamsatName('SAMSAT ' + name)
       }
       return
     }
@@ -157,14 +164,14 @@ const parseSheetCSV = (csvData: string, defaultSamsat: string): DeviceRow[] => {
       let name = potentialSamsat.trim()
       name = name.replace(/UPPD\s+/gi, '').trim()
       name = name.replace(/^SAMSAT\s+/gi, '').trim()
-      currentSamsat = 'SAMSAT ' + name
+      currentSamsat = normalizeSamsatName('SAMSAT ' + name)
       return
     }
 
     const isDataRow = /^\d+$/.test(cells[0] || '') && cells.length >= 5
     if (!isDataRow) return
 
-    let finalSamsat = currentSamsat
+    let finalSamsat = normalizeSamsatName(currentSamsat)
     let finalServiceUnit = cells[4] || 'Umum'
 
     if (currentSamsat.toUpperCase().includes('HANDIL BAKTI')) {
@@ -218,7 +225,7 @@ const parseSheetCSV = (csvData: string, defaultSamsat: string): DeviceRow[] => {
 
 const ensureSamsat = async (db: D1Database, samsatName: string) => {
   const now = nowIso()
-  const id = samsatName.trim()
+  const id = normalizeSamsatName(samsatName)
   await db
     .prepare(
       'INSERT INTO samsat (id, name, created_at, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, updated_at=excluded.updated_at'
@@ -260,7 +267,7 @@ const mapDeviceRow = (row: Record<string, unknown>): DeviceRow => {
   const hasPhoto = Boolean(Number(row.has_photo || 0))
   return {
     id: String(row.id || ''),
-    samsat: String(row.samsat || row.samsat_id || ''),
+    samsat: normalizeSamsatName(String(row.samsat || row.samsat_id || '')),
     name: String(row.name || ''),
     category: String(row.category || ''),
     serviceUnit: String(row.service_unit || row.serviceUnit || ''),
@@ -291,7 +298,7 @@ export async function onRequestGet({ request, env }: { request: Request; env: En
 
   if (samsat) {
     where.push('s.name = ?')
-    args.push(samsat)
+    args.push(normalizeSamsatName(samsat))
   }
 
   if (q) {

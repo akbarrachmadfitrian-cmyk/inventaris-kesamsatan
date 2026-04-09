@@ -24,6 +24,13 @@ const json = (data: unknown, init?: ResponseInit) =>
     },
   })
 
+const normalizeSamsatName = (raw: string) => {
+  const s = String(raw || '').trim().toUpperCase()
+  if (s === 'SAMSAT BANJARMASIN 1') return 'SAMSAT BANJARMASIN I'
+  if (s === 'SAMSAT BANJARMASIN 2') return 'SAMSAT BANJARMASIN II'
+  return s
+}
+
 export async function onRequestGet({ env }: { env: Env }) {
   if (!env.DB) return json({ error: 'DB belum dikonfigurasi' }, { status: 500 })
 
@@ -38,10 +45,19 @@ export async function onRequestGet({ env }: { env: Env }) {
     )
     .all<Record<string, unknown>>()
 
-  const items = res.results.map(r => ({
-    samsat: String(r.samsat || ''),
+  const raw = res.results.map(r => ({
+    samsat: normalizeSamsatName(String(r.samsat || '')),
     total: Number(r.total || 0),
   }))
+
+  // Merge entries that normalize to the same name
+  const merged = new Map<string, number>()
+  for (const r of raw) {
+    merged.set(r.samsat, (merged.get(r.samsat) || 0) + r.total)
+  }
+  const items = Array.from(merged.entries())
+    .map(([samsat, total]) => ({ samsat, total }))
+    .sort((a, b) => b.total - a.total || a.samsat.localeCompare(b.samsat))
 
   return json({ items }, { status: 200 })
 }

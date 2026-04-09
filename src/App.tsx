@@ -1903,13 +1903,14 @@ function App() {
 
         try {
           const idxRes = await axios.get('/api/public/samsat', { timeout: 8000 });
-          const idxItems = (idxRes.data?.items || []) as Array<{ samsat: string; total: number }>;
+          const idxItemsRaw = (idxRes.data?.items || []) as Array<{ samsat: string; total: number }>;
+          const idxItems = idxItemsRaw.map(i => ({ samsat: normalizeSamsatName(String(i.samsat || '')), total: Number(i.total || 0) }));
           const filtered =
             access.allowedSamsat && access.allowedSamsat.length > 0
-              ? idxItems.filter(i => access.allowedSamsat?.includes(String(i.samsat || '')))
+              ? idxItems.filter(i => access.allowedSamsat?.includes(i.samsat))
               : idxItems;
-          const list = filtered.map(i => String(i.samsat || '')).filter(Boolean);
-          const totals = Object.fromEntries(filtered.map(i => [String(i.samsat || ''), Number(i.total || 0)]));
+          const list = filtered.map(i => i.samsat).filter(Boolean);
+          const totals = Object.fromEntries(filtered.map(i => [i.samsat, i.total]));
           setSamsatIndex(list);
           setSamsatTotals(totals);
         } catch {
@@ -1922,11 +1923,12 @@ function App() {
           const serial = String(d.serialNumber || '').trim();
           const phone = String(d.phoneNumber || '').trim();
           const dataComplete = normalizeFilled(serial) && normalizeFilled(phone);
+          const samsatNormalized = normalizeSamsatName(d.samsat);
           return {
             id: d.id,
             name: d.name,
             category: d.category,
-            location: d.samsat,
+            location: samsatNormalized,
             subLocation: d.subLocation || 'Staff',
             serialNumber: d.serialNumber,
             phoneNumber: d.phoneNumber,
@@ -1938,7 +1940,7 @@ function App() {
             photo,
             isComplete: !!photo || !!d.photoR2Key,
             dataComplete,
-            samsat: d.samsat,
+            samsat: samsatNormalized,
             serviceUnit: d.serviceUnit,
             sheetName: 'DB'
           };
