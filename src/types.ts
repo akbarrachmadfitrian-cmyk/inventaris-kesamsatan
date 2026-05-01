@@ -44,6 +44,13 @@ export interface DeviceRequestLetter {
   uploadedAt: string;
 }
 
+export interface FastDeviceEntry {
+  tempId: string;
+  name: string;
+  serialNumber: string;
+  budgetYear: string;
+}
+
 export interface DeviceRequest {
   requestId: string;
   samsat: string;
@@ -57,6 +64,9 @@ export interface DeviceRequest {
   kabid: { status: ApprovalStatus; approvedCount: number | null };
   sekban: { status: ApprovalStatus; approvedCount: number | null };
   addedDeviceIds: string[];
+  fastDevicesArray?: FastDeviceEntry[];
+  outcome: 'approved' | 'rejected' | null;
+  rejectionReason: string | null;
   finalizedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -117,7 +127,7 @@ export interface MessageDirectoryItem {
   expiresAt: string;
 }
 
-export type AuthRole = 'admin' | 'user';
+export type AuthRole = 'superadmin' | 'admin_infra' | 'admin_regional' | 'user_samsat' | 'user_global' | 'admin' | 'user';
 
 export interface AuthCredentials {
   adminPassword: string;
@@ -127,6 +137,8 @@ export interface AuthCredentials {
 export interface AuthSession {
   role: AuthRole;
   username: string;
+  canManageLogin: boolean;
+  allowedSamsat: string[];
   loggedInAt: string;
 }
 

@@ -22,6 +22,8 @@ interface DeviceRequestState {
   kabid: { status: ApprovalStatus; approvedCount: number | null }
   sekban: { status: ApprovalStatus; approvedCount: number | null }
   addedDeviceIds: string[]
+  outcome: 'approved' | 'rejected' | null
+  rejectionReason: string | null
   finalizedAt: string | null
   createdAt: string
   updatedAt: string
@@ -79,6 +81,8 @@ const createDefaultRequest = (samsat: string): DeviceRequestState => ({
   kabid: { status: 'pending', approvedCount: null },
   sekban: { status: 'pending', approvedCount: null },
   addedDeviceIds: [],
+  outcome: null,
+  rejectionReason: null,
   finalizedAt: null,
   createdAt: nowIso(),
   updatedAt: nowIso(),
@@ -124,15 +128,12 @@ const hasCountColumns = async (db: D1Database) => {
 }
 
 const hasHistoryTable = async (db: D1Database) => {
-  if (deviceRequestsHasHistoryTableCache !== null) return deviceRequestsHasHistoryTableCache
   try {
     const res = await db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='device_requests_history'")
       .first<Record<string, unknown>>()
-    deviceRequestsHasHistoryTableCache = !!res
-    return deviceRequestsHasHistoryTableCache
+    return !!res
   } catch {
-    deviceRequestsHasHistoryTableCache = false
     return false
   }
 }
@@ -192,6 +193,8 @@ const parseRequestRow = (row: Record<string, unknown>): DeviceRequestState => {
     kabid: { status: kabidStatus, approvedCount: Number.isFinite(kabidApproved) ? kabidApproved : null },
     sekban: { status: sekbanStatus, approvedCount: Number.isFinite(sekbanApproved) ? sekbanApproved : null },
     addedDeviceIds,
+    outcome: (row.outcome as 'approved' | 'rejected') || null,
+    rejectionReason: row.rejection_reason ? String(row.rejection_reason) : null,
     finalizedAt: row.finalized_at ? String(row.finalized_at) : null,
     createdAt: row.created_at ? String(row.created_at) : nowIso(),
     updatedAt: row.updated_at ? String(row.updated_at) : nowIso(),
@@ -213,7 +216,7 @@ export async function onRequestGet({ request, env }: { request: Request; env: En
           `SELECT r.*, s.name AS samsat
            FROM device_requests_history r
            JOIN samsat s ON s.id = r.samsat_id
-           WHERE r.id = ? AND r.deleted_at IS NULL`
+           WHERE r.id = ?`
         )
         .bind(requestId)
         .first<Record<string, unknown>>()
@@ -233,7 +236,7 @@ export async function onRequestGet({ request, env }: { request: Request; env: En
         `SELECT r.*, s.name AS samsat
          FROM device_requests_history r
          JOIN samsat s ON s.id = r.samsat_id
-         WHERE r.samsat_id = ? AND r.deleted_at IS NULL
+         WHERE r.samsat_id = ?
          ORDER BY r.created_at DESC
          LIMIT 200`
       )
@@ -305,6 +308,8 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
   const addedDeviceIds = Array.isArray(addedDeviceIdsRaw) ? addedDeviceIdsRaw.map(v => String(v)) : []
   const addedDeviceIdsJson = JSON.stringify(addedDeviceIds)
   const finalizedAt = payload.finalizedAt ? String(payload.finalizedAt) : null
+  const outcomeVal = (payload as Record<string, unknown>).outcome ? String((payload as Record<string, unknown>).outcome) : null
+  const rejectionReasonVal = (payload as Record<string, unknown>).rejectionReason ? String((payload as Record<string, unknown>).rejectionReason) : null
 
   const letter = payload.letter && typeof payload.letter === 'object' ? (payload.letter as Record<string, unknown>) : null
   const letterFileName = letter?.fileName ? String(letter.fileName) : null
@@ -320,7 +325,7 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
 
   const now = nowIso()
   if (action === 'delete') {
-    await env.DB.prepare('UPDATE device_requests_history SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL').bind(now, now, requestId).run()
+    await env.DB.prepare('DELETE FROM device_requests_history WHERE id = ?').bind(requestId).run()
     return json({ ok: true }, { status: 200 })
   }
 
@@ -330,12 +335,14 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
   if (action === 'create') {
     const id = newId()
     const createdAt = now
+    const outcome = outcomeVal
+    const rejectionReason = rejectionReasonVal
     const addedDeviceIdsJson = JSON.stringify([])
     await env.DB
       .prepare(
         `INSERT INTO device_requests_history
-         (id, samsat_id, request_type, requested_count, ${withCounts ? 'requested_count_pc, requested_count_printer,' : ''} stock_status, kabid_status, kabid_approved_count, sekban_status, sekban_approved_count, added_device_ids_json, finalized_at, letter_file_name, letter_mime_type, letter_uploaded_at, ${withFiles ? 'letter_data_url,' : ''} ba_file_name, ba_mime_type, ba_uploaded_at, ${withFiles ? 'ba_data_url,' : ''} created_at, updated_at, deleted_at)
-         VALUES (?, ?, ?, ?, ${withCounts ? '?, ?,' : ''} ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${withFiles ? '?,' : ''} ?, ?, ?, ${withFiles ? '?,' : ''} ?, ?, NULL)`
+         (id, samsat_id, request_type, requested_count, ${withCounts ? 'requested_count_pc, requested_count_printer,' : ''} stock_status, kabid_status, kabid_approved_count, sekban_status, sekban_approved_count, added_device_ids_json, outcome, rejection_reason, finalized_at, letter_file_name, letter_mime_type, letter_uploaded_at, ${withFiles ? 'letter_data_url,' : ''} ba_file_name, ba_mime_type, ba_uploaded_at, ${withFiles ? 'ba_data_url,' : ''} created_at, updated_at, deleted_at)
+         VALUES (?, ?, ?, ?, ${withCounts ? '?, ?,' : ''} ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${withFiles ? '?,' : ''} ?, ?, ?, ${withFiles ? '?,' : ''} ?, ?, NULL)`
       )
       .bind(
         id,
@@ -349,6 +356,8 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
         sekbanStatus,
         Number.isFinite(sekbanApprovedCount as number) ? sekbanApprovedCount : null,
         addedDeviceIdsJson,
+        outcome,
+        rejectionReason,
         finalizedAt,
         letterFileName,
         letterMimeType,
@@ -377,7 +386,7 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
   }
 
   const existing = await env.DB
-    .prepare('SELECT id, created_at FROM device_requests_history WHERE id = ? AND deleted_at IS NULL')
+    .prepare('SELECT id, created_at FROM device_requests_history WHERE id = ?')
     .bind(requestId)
     .first<Record<string, unknown>>()
   if (!existing) return json({ error: 'permintaan tidak ditemukan' }, { status: 404 })
@@ -397,6 +406,8 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
              sekban_status=?,
              sekban_approved_count=?,
              added_device_ids_json=?,
+             outcome=?,
+             rejection_reason=?,
              finalized_at=?,
              letter_file_name=?,
              letter_mime_type=?,
@@ -408,7 +419,7 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
              ba_data_url=?,
              created_at=?,
              updated_at=?
-         WHERE id=? AND deleted_at IS NULL`
+         WHERE id=?`
       )
       .bind(
         samsatId,
@@ -421,6 +432,8 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
         sekbanStatus,
         Number.isFinite(sekbanApprovedCount as number) ? sekbanApprovedCount : null,
         addedDeviceIdsJson,
+        outcomeVal,
+        rejectionReasonVal,
         finalizedAt,
         letterFileName,
         letterMimeType,
@@ -449,13 +462,15 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
              sekban_status=?,
              sekban_approved_count=?,
              added_device_ids_json=?,
+             outcome=?,
+             rejection_reason=?,
              finalized_at=?,
              letter_file_name=?,
              letter_mime_type=?,
              letter_uploaded_at=?,
              created_at=?,
              updated_at=?
-         WHERE id=? AND deleted_at IS NULL`
+         WHERE id=?`
       )
       .bind(
         samsatId,
@@ -468,6 +483,8 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
         sekbanStatus,
         Number.isFinite(sekbanApprovedCount as number) ? sekbanApprovedCount : null,
         addedDeviceIdsJson,
+        outcomeVal,
+        rejectionReasonVal,
         finalizedAt,
         letterFileName,
         letterMimeType,

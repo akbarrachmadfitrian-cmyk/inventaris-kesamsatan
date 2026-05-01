@@ -8,7 +8,7 @@ import {
   Monitor, Printer, LayoutDashboard, ChevronRight,
   Building2, Layers, XCircle, AlertTriangle,
   Trash2, Plus, FileUp, Clock3,
-  ChevronDown, List, KeyRound, Inbox, Send, Pencil, Truck
+  ChevronDown, List, KeyRound, Inbox, Send, Pencil, Truck, Hourglass
 } from 'lucide-react';
 import { Sidebar } from './components/layout/Sidebar';
 import { DeviceDetailModal } from './components/modals/DeviceDetailModal';
@@ -24,8 +24,11 @@ import {
   DeviceRequestLetter, DeviceRequest, InboxKind, InboxStatus,
   InboxAttachment, DamageReportPayload, DeviceRequestSubmissionPayload,
   InboxMessage, MessageDirectoryKind, MessageDirectoryItem,
-  AuthRole, AuthCredentials, AuthSession, AdminAccessScope, AccountAccess
+  AuthRole, AuthCredentials, AuthSession, AdminAccessScope, AccountAccess, FastDeviceEntry
 } from './types';
+import { generateBASTPdf } from './utils/generateBASTPdf';
+import { useAutoUpdate } from './hooks/useAutoUpdate';
+
 
 export const LS_DELETED_DEVICE_IDS = 'samsat_deleted_device_ids';
 export const LS_ADDED_DEVICES = 'samsat_added_devices';
@@ -101,82 +104,21 @@ const getAccountAccess = (session: AuthSession | null): AccountAccess => {
     };
   }
 
-  const username = String(session.username || '').trim().toLowerCase();
-
-  if (session.role === 'admin') {
-    if (username === 'admin') {
-      return {
-        canSelectSamsat: true,
-        canManageLogin: true,
-        canAddDevice: true,
-        canEditRequests: true,
-        allowedSamsat: null,
-      };
-    }
-
-    const sub = SUB_ADMIN_ACCOUNTS[username];
-    if (sub) {
-      const allowedSamsat = sub.scope === 'restricted' ? (sub.allowedSamsat || []).map(normalizeSamsatName) : null;
-      return {
-        canSelectSamsat: sub.scope === 'restricted' ? true : true,
-        canManageLogin: !sub.hideManageLogin,
-        canAddDevice: !sub.hideAddDevice,
-        canEditRequests: !sub.requestsReadOnly,
-        allowedSamsat,
-      };
-    }
-
-    return {
-      canSelectSamsat: true,
-      canManageLogin: false,
-      canAddDevice: false,
-      canEditRequests: false,
-      allowedSamsat: null,
-    };
-  }
-
-  if (session.role === 'user') {
-    if (username === 'user') {
-      return {
-        canSelectSamsat: true,
-        canManageLogin: false,
-        canAddDevice: false,
-        canEditRequests: false,
-        allowedSamsat: null,
-      };
-    }
-
-    const samsat = SAMSAT_USER_ACCOUNTS[username];
-    if (samsat) {
-      return {
-        canSelectSamsat: false,
-        canManageLogin: false,
-        canAddDevice: false,
-        canEditRequests: false,
-        allowedSamsat: [normalizeSamsatName(samsat)],
-      };
-    }
-
-    return {
-      canSelectSamsat: false,
-      canManageLogin: false,
-      canAddDevice: false,
-      canEditRequests: false,
-      allowedSamsat: null,
-    };
-  }
+  const role = session.role;
+  const isAll = session.allowedSamsat && (session.allowedSamsat.includes('ALL') || session.allowedSamsat.includes('all'));
+  const allowedSamsat = isAll ? null : session.allowedSamsat;
 
   return {
-    canSelectSamsat: true,
-    canManageLogin: false,
-    canAddDevice: false,
-    canEditRequests: false,
-    allowedSamsat: null,
+    canSelectSamsat: !['user_samsat'].includes(role),
+    canManageLogin: session.canManageLogin,
+    canAddDevice: role === 'superadmin' || role === 'admin_regional', // admin_infra can't add
+    canEditRequests: ['superadmin', 'admin_regional', 'admin'].includes(role), // admin_infra is read-only for requests
+    allowedSamsat,
   };
 };
 
 const LS_AUTH_CREDENTIALS = 'samsat_auth_credentials';
-const LS_AUTH_SESSION = 'samsat_auth_session';
+const SS_AUTH_SESSION = 'samsat_auth_session';
 
 const safeParseJSON = <T,>(raw: string | null, fallback: T): T => {
   if (!raw) return fallback;
@@ -372,29 +314,9 @@ const createLocalId = () => {
   return `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 };
 
-const getAuthCredentials = (): AuthCredentials => {
-  if (typeof window === 'undefined') return { adminPassword: 'admin', userPassword: 'user' };
-  const fallback: AuthCredentials = { adminPassword: 'admin', userPassword: 'user' };
-  const raw = localStorage.getItem(LS_AUTH_CREDENTIALS);
-  const parsed = safeParseJSON<Partial<AuthCredentials>>(raw, {});
-  const normalized: AuthCredentials = {
-    adminPassword: typeof parsed.adminPassword === 'string' && parsed.adminPassword.trim() ? parsed.adminPassword : fallback.adminPassword,
-    userPassword: typeof parsed.userPassword === 'string' && parsed.userPassword.trim() ? parsed.userPassword : fallback.userPassword
-  };
-  if (!raw || parsed.adminPassword !== normalized.adminPassword || parsed.userPassword !== normalized.userPassword) {
-    localStorage.setItem(LS_AUTH_CREDENTIALS, JSON.stringify(normalized));
-  }
-  return normalized;
-};
-
-const saveAuthCredentials = (creds: AuthCredentials) => {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem(LS_AUTH_CREDENTIALS, JSON.stringify(creds));
-};
-
 const loadAuthSession = (): AuthSession | null => {
   if (typeof window === 'undefined') return null;
-  const parsed = safeParseJSON<AuthSession | null>(localStorage.getItem(LS_AUTH_SESSION), null);
+  const parsed = safeParseJSON<AuthSession | null>(sessionStorage.getItem(SS_AUTH_SESSION), null);
   if (!parsed) return null;
   if (parsed.role !== 'admin' && parsed.role !== 'user') return null;
   if (typeof parsed.username !== 'string' || !parsed.username.trim()) return null;
@@ -404,12 +326,15 @@ const loadAuthSession = (): AuthSession | null => {
 
 const saveAuthSession = (session: AuthSession) => {
   if (typeof window === 'undefined') return;
-  localStorage.setItem(LS_AUTH_SESSION, JSON.stringify(session));
+  sessionStorage.setItem(SS_AUTH_SESSION, JSON.stringify(session));
 };
 
 const clearAuthSession = () => {
   if (typeof window === 'undefined') return;
-  localStorage.removeItem(LS_AUTH_SESSION);
+  sessionStorage.removeItem(SS_AUTH_SESSION);
+  sessionStorage.removeItem('admin_api_key');
+  sessionStorage.removeItem('user_api_key');
+  sessionStorage.clear();
 };
 
 const loadDeletedDeviceIds = () => safeParseJSON<string[]>(localStorage.getItem(LS_DELETED_DEVICE_IDS), []);
@@ -433,6 +358,8 @@ const createDefaultRequest = (samsat: string): DeviceRequest => ({
   stockStatus: 'standby',
   kabid: { status: 'pending', approvedCount: null },
   sekban: { status: 'pending', approvedCount: null },
+  outcome: null,
+  rejectionReason: null,
   addedDeviceIds: [],
   finalizedAt: null,
   createdAt: new Date().toISOString(),
@@ -605,18 +532,42 @@ const parseSheetCSV = (csvData: string, defaultSamsat: string): Device[] => {
 };
 
 function App() {
+  // Auto-update: check for new builds on Cloudflare and hard-refresh if needed
+  useAutoUpdate();
+
+  // One-time cleanup for old localStorage auth data
+  useEffect(() => {
+    localStorage.removeItem('samsat_auth_session');
+    localStorage.removeItem('admin_api_key');
+    localStorage.removeItem('user_api_key');
+  }, []);
+
+  // Cloudflare Turnstile CAPTCHA
+  const TURNSTILE_SITE_KEY = '0x4AAAAAAC-vx6R61kfV_C_Q';
+  useEffect(() => {
+    if (document.getElementById('turnstile-script')) return;
+    const script = document.createElement('script');
+    script.id = 'turnstile-script';
+    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad&render=explicit';
+    script.async = true;
+    script.defer = true;
+    document.head.appendChild(script);
+  }, []);
+
   const [session, setSession] = useState<AuthSession | null>(() => loadAuthSession());
   const [authTab, setAuthTab] = useState<AuthRole>('admin');
   const [authUsername, setAuthUsername] = useState('');
   const [authPassword, setAuthPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const turnstileRef = useRef<HTMLDivElement>(null);
+  const turnstileWidgetId = useRef<string | null>(null);
   const [isManageLoginOpen, setIsManageLoginOpen] = useState(false);
   const [manageLoginForm, setManageLoginForm] = useState({
-    currentAdminPassword: '',
-    newAdminPassword: '',
-    confirmAdminPassword: '',
-    newUserPassword: '',
-    confirmUserPassword: ''
+    targetUsername: '',
+    newPassword: '',
+    confirmPassword: ''
   });
   const [manageLoginError, setManageLoginError] = useState<string | null>(null);
   const [manageLoginSuccess, setManageLoginSuccess] = useState<string | null>(null);
@@ -731,7 +682,7 @@ function App() {
     alasanPermintaan: ''
   });
 
-  const isAdmin = session?.role === 'admin';
+  const isAdmin = !!session && ['superadmin', 'admin_infra', 'admin_regional', 'admin'].includes(session.role);
   const accountAccess = useMemo(() => getAccountAccess(session), [session]);
   const strictSheetSync = false;
 
@@ -771,12 +722,16 @@ function App() {
   }, [selectedDevice?.id]);
 
   useEffect(() => {
-    if (session?.role === 'admin') {
-      const key = String(localStorage.getItem('admin_api_key') || '').trim();
+    const currentRole = session?.role || '';
+    const isAdminRole = ['superadmin', 'admin_infra', 'admin_regional', 'admin'].includes(currentRole);
+    const isUserRole = ['user_samsat', 'user_global', 'user'].includes(currentRole);
+
+    if (isAdminRole) {
+      const key = String(sessionStorage.getItem('admin_api_key') || '').trim();
       if (key) axios.defaults.headers.common['x-admin-key'] = key;
       delete axios.defaults.headers.common['x-user-key'];
-    } else if (session?.role === 'user') {
-      const key = String(localStorage.getItem('user_api_key') || '').trim();
+    } else if (isUserRole) {
+      const key = String(sessionStorage.getItem('user_api_key') || '').trim();
       if (key) axios.defaults.headers.common['x-user-key'] = key;
       delete axios.defaults.headers.common['x-admin-key'];
     } else {
@@ -799,55 +754,70 @@ function App() {
     }
   }, [session, activeSamsat]);
 
-  const handleLogin = (role: AuthRole) => {
-    const creds = getAuthCredentials();
+  const handleLogin = async (role: AuthRole) => {
     const enteredUsername = authUsername.trim();
-    const enteredUsernameLower = enteredUsername.toLowerCase();
-
-    let expectedPassword: string | null = null;
-
-    if (role === 'admin') {
-      if (enteredUsernameLower === 'admin') expectedPassword = creds.adminPassword;
-      else if (enteredUsernameLower in SUB_ADMIN_ACCOUNTS) expectedPassword = SUB_ADMIN_ACCOUNTS[enteredUsernameLower].password;
-    } else {
-      if (enteredUsernameLower === 'user') expectedPassword = creds.userPassword;
-      else if (enteredUsernameLower in SAMSAT_USER_ACCOUNTS) expectedPassword = SAMSAT_USER_PASSWORD;
-    }
-
-    if (!expectedPassword || authPassword !== expectedPassword) {
-      setAuthError('User atau password salah');
+    if (!enteredUsername || !authPassword) {
+      setAuthError('Username dan password wajib diisi');
       return;
     }
 
-    const nextSession: AuthSession = { role, username: enteredUsernameLower, loggedInAt: new Date().toISOString() };
-    setSession(nextSession);
-    saveAuthSession(nextSession);
-    if (role === 'admin') {
-      const existingKey = String(localStorage.getItem('admin_api_key') || '').trim();
-      const key =
-        existingKey ||
-        String(window.prompt('Masukkan Admin API Key (untuk akses fitur admin server):') || '').trim();
-      if (key) {
-        localStorage.setItem('admin_api_key', key);
-        axios.defaults.headers.common['x-admin-key'] = key;
+    let nextSession: AuthSession | null = null;
+    try {
+      setAuthError(null);
+      const res = await axios.post('/api/auth/login', {
+        username: enteredUsername.toLowerCase().trim(),
+        password: authPassword,
+        turnstileToken: turnstileToken || undefined
+      });
+
+      nextSession = res.data.user;
+      if (!nextSession) throw new Error('Invalid session data from server');
+
+      const isAdminTab = role === 'admin';
+      const isActualAdmin = ['superadmin', 'admin_infra', 'admin_regional', 'admin'].includes(nextSession.role);
+
+      // Enforce tab logic: Regional/Infra must use Admin tab
+      if (isAdminTab && !isActualAdmin) {
+        throw new Error('Akun ini harus login melalui Tab User');
       }
-      delete axios.defaults.headers.common['x-user-key'];
-    } else {
-      const existingKey = String(localStorage.getItem('user_api_key') || '').trim();
-      const key =
-        existingKey ||
-        String(window.prompt('Masukkan User API Key (untuk akses aplikasi):') || '').trim();
-      if (key) {
-        localStorage.setItem('user_api_key', key);
-        axios.defaults.headers.common['x-user-key'] = key;
+      if (!isAdminTab && isActualAdmin) {
+        throw new Error('Akun ini harus login melalui Tab Super Admin');
       }
-      delete axios.defaults.headers.common['x-admin-key'];
+
+      // Setup dynamic headers based on role if needed
+      if (['superadmin', 'admin_infra', 'admin_regional', 'admin'].includes(nextSession.role)) {
+        const existingKey = String(sessionStorage.getItem('admin_api_key') || '').trim();
+        const key = existingKey || String(window.prompt('Masukkan Admin API Key (untuk akses fitur admin server):') || '').trim();
+        if (key) {
+          sessionStorage.setItem('admin_api_key', key);
+          axios.defaults.headers.common['x-admin-key'] = key;
+        }
+        delete axios.defaults.headers.common['x-user-key'];
+      } else {
+        const existingKey = String(sessionStorage.getItem('user_api_key') || '').trim();
+        const key = existingKey || String(window.prompt('Masukkan User API Key (untuk akses aplikasi):') || '').trim();
+        if (key) {
+          sessionStorage.setItem('user_api_key', key);
+          axios.defaults.headers.common['x-user-key'] = key;
+        }
+        delete axios.defaults.headers.common['x-admin-key'];
+      }
+      
+      setSession(nextSession);
+      saveAuthSession(nextSession);
+      setAuthUsername('');
+      setAuthPassword('');
+      // Reset Turnstile widget
+      setTurnstileToken(null);
+      if (turnstileWidgetId.current && (window as any).turnstile) {
+        (window as any).turnstile.reset(turnstileWidgetId.current);
+      }
+    } catch (err: any) {
+      setAuthError(err.response?.data?.error || 'Gagal login ke server');
+      return;
     }
-    setAuthUsername('');
-    setAuthPassword('');
-    setAuthError(null);
-    setSelectedDevice(null);
-    setIsEditing(false);
+
+    if (!nextSession) return;
     const access = getAccountAccess(nextSession);
     if (access.allowedSamsat && access.allowedSamsat.length === 1) {
       setViewMode('dashboard');
@@ -1421,64 +1391,53 @@ function App() {
     }
   };
 
-  const saveManageLogin = () => {
+  const saveManageLogin = async () => {
     if (!isAdmin) return;
 
-    const creds = getAuthCredentials();
-    if (manageLoginForm.currentAdminPassword !== creds.adminPassword) {
-      setManageLoginError('Password super admin saat ini salah');
+    if (!manageLoginForm.targetUsername) {
+      setManageLoginError('Silakan pilih akun yang akan diubah');
+      setManageLoginSuccess(null);
+      return;
+    }
+    
+    if (!manageLoginForm.newPassword || !manageLoginForm.confirmPassword) {
+      setManageLoginError('Lengkapi password baru dan konfirmasi');
+      setManageLoginSuccess(null);
+      return;
+    }
+    
+    if (manageLoginForm.newPassword !== manageLoginForm.confirmPassword) {
+      setManageLoginError('Konfirmasi password tidak sama');
       setManageLoginSuccess(null);
       return;
     }
 
-    let nextCreds = { ...creds };
+    try {
+      setManageLoginError(null);
+      setManageLoginSuccess('Memperbarui password...');
 
-    const adminUpdateAttempt = !!manageLoginForm.newAdminPassword || !!manageLoginForm.confirmAdminPassword;
-    if (adminUpdateAttempt) {
-      if (!manageLoginForm.newAdminPassword || !manageLoginForm.confirmAdminPassword) {
-        setManageLoginError('Lengkapi password super admin baru dan konfirmasi');
-        setManageLoginSuccess(null);
-        return;
-      }
-      if (manageLoginForm.newAdminPassword !== manageLoginForm.confirmAdminPassword) {
-        setManageLoginError('Konfirmasi password super admin tidak sama');
-        setManageLoginSuccess(null);
-        return;
-      }
-      nextCreds = { ...nextCreds, adminPassword: manageLoginForm.newAdminPassword };
-    }
+      await axios.post('/api/admin/users/update-password', {
+        username: manageLoginForm.targetUsername,
+        newPassword: manageLoginForm.newPassword
+      });
 
-    const userUpdateAttempt = !!manageLoginForm.newUserPassword || !!manageLoginForm.confirmUserPassword;
-    if (userUpdateAttempt) {
-      if (!manageLoginForm.newUserPassword || !manageLoginForm.confirmUserPassword) {
-        setManageLoginError('Lengkapi password user baru dan konfirmasi');
+      setManageLoginSuccess(`Password untuk ${manageLoginForm.targetUsername} berhasil diperbarui di database!`);
+      setManageLoginForm({
+        targetUsername: '',
+        newPassword: '',
+        confirmPassword: ''
+      });
+      // Optionally close the modal after 2 seconds
+      setTimeout(() => {
+        setIsManageLoginOpen(false);
         setManageLoginSuccess(null);
-        return;
-      }
-      if (manageLoginForm.newUserPassword !== manageLoginForm.confirmUserPassword) {
-        setManageLoginError('Konfirmasi password user tidak sama');
-        setManageLoginSuccess(null);
-        return;
-      }
-      nextCreds = { ...nextCreds, userPassword: manageLoginForm.newUserPassword };
-    }
+      }, 2000);
 
-    if (!adminUpdateAttempt && !userUpdateAttempt) {
-      setManageLoginError('Isi minimal satu perubahan password');
+    } catch (err: any) {
+      const msg = err.response?.data?.error || err.message || 'Gagal memperbarui password';
+      setManageLoginError(`Gagal: ${msg}`);
       setManageLoginSuccess(null);
-      return;
     }
-
-    saveAuthCredentials(nextCreds);
-    setManageLoginError(null);
-    setManageLoginSuccess('Password berhasil diperbarui');
-    setManageLoginForm({
-      currentAdminPassword: '',
-      newAdminPassword: '',
-      confirmAdminPassword: '',
-      newUserPassword: '',
-      confirmUserPassword: ''
-    });
   };
 
   const fetchRequestHistoryFromApi = async (samsat: string) => {
@@ -1551,15 +1510,15 @@ function App() {
     setIsAddDeviceModalOpen(true);
   };
 
-  const persistRequestDraft = async (next: DeviceRequest) => {
+  const persistRequestDraft = async (next: DeviceRequest, skipApi = false) => {
     if (strictSheetSync) return;
     if (!isAdmin) return;
-    if (dbAvailable) {
+    if (dbAvailable && !skipApi) {
       try {
         if (!next.requestId) return;
         await saveRequestToApi(next);
       } catch {
-        window.alert('Gagal menyimpan data permintaan ke database.');
+        // window.alert('Gagal menyimpan data permintaan ke database.');
       }
     }
     const requests = loadDeviceRequests();
@@ -1605,8 +1564,9 @@ function App() {
       if (created?.requestId) {
         await openRequestEditor(created.requestId);
       }
-    } catch {
-      window.alert('Gagal membuat permintaan baru.');
+    } catch (err: any) {
+      const errMsg = err.response?.data?.error || err.message || 'Gagal membuat permintaan baru.';
+      window.alert(`Gagal membuat permintaan baru: ${errMsg}`);
     } finally {
       setRequestHistoryLoading(false);
     }
@@ -1615,7 +1575,7 @@ function App() {
   const deleteRequestFromHub = async (req: DeviceRequest) => {
     if (!isAdmin) return;
     if (!accountAccess.canEditRequests) return;
-    const ok = window.confirm('apakah anda yakin ingin menghapus history permintaan ini?');
+    const ok = window.confirm('APAKAH ANDA YAKIN INGIN MENGHAPUS PERMANEN history permintaan ini?\n(Data akan dihapus selamanya dari database D1)');
     if (!ok) return;
     try {
       await deleteRequestInApi({ requestId: req.requestId, samsat: req.samsat });
@@ -1623,8 +1583,9 @@ function App() {
         const items = await fetchRequestHistoryFromApi(activeSamsat);
         setRequestHistoryItems(items);
       }
-    } catch {
-      window.alert('Gagal menghapus history.');
+    } catch (err: any) {
+      const errMsg = err.response?.data?.error || err.message || 'Gagal menghapus history.';
+      window.alert(`Gagal menghapus: ${errMsg}`);
     }
   };
 
@@ -1799,6 +1760,32 @@ function App() {
     reader.readAsDataURL(file);
   };
 
+  const handleBASTUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (strictSheetSync) return;
+    if (!isAdmin) return;
+    if (!requestDraft) return;
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!validatePickedFile(file, { allowedMimeTypes: ['application/pdf'], maxBytes: 1 * 1024 * 1024, label: 'Upload Berita Acara (BAST)' })) {
+      return;
+    }
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const dataUrl = String(reader.result || '');
+      const next: DeviceRequest = {
+        ...requestDraft,
+        beritaAcara: {
+          fileName: file.name,
+          mimeType: file.type || 'application/pdf',
+          dataUrl,
+          uploadedAt: new Date().toISOString()
+        }
+      };
+      persistRequestDraft(next);
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleRemoveLetter = () => {
     if (strictSheetSync) return;
     if (!isAdmin) return;
@@ -1859,17 +1846,21 @@ function App() {
         } catch (e) {
           const err = e as unknown;
           if (axios.isAxiosError(err) && err.response?.status === 403) {
-            if (session?.role === 'admin') {
+            const currentRole = session?.role || '';
+            const isAdminRole = ['superadmin', 'admin_infra', 'admin_regional', 'admin'].includes(currentRole);
+            const isUserRole = ['user_samsat', 'user_global', 'user'].includes(currentRole);
+
+            if (isAdminRole) {
               const key = String(window.prompt('Akses database ditolak. Masukkan Admin API Key:') || '').trim();
               if (!key) throw err;
-              localStorage.setItem('admin_api_key', key);
+              sessionStorage.setItem('admin_api_key', key);
               axios.defaults.headers.common['x-admin-key'] = key;
               delete axios.defaults.headers.common['x-user-key'];
               itemsRaw = await fetchAllFromDb();
-            } else if (session?.role === 'user') {
+            } else if (isUserRole) {
               const key = String(window.prompt('Akses database ditolak. Masukkan User API Key:') || '').trim();
               if (!key) throw err;
-              localStorage.setItem('user_api_key', key);
+              sessionStorage.setItem('user_api_key', key);
               axios.defaults.headers.common['x-user-key'] = key;
               delete axios.defaults.headers.common['x-admin-key'];
               itemsRaw = await fetchAllFromDb();
@@ -2182,7 +2173,9 @@ function App() {
     void (async () => {
       try {
         const fetchBlob = async () => {
-          const endpoint = session.role === 'admin' ? '/api/admin/device-photo' : '/api/public/device-photo';
+          const currentRole = session.role;
+          const isAdminRole = ['superadmin', 'admin_infra', 'admin_regional', 'admin'].includes(currentRole);
+          const endpoint = isAdminRole ? '/api/admin/device-photo' : '/api/public/device-photo';
           const res = await axios.get(endpoint, { params: { deviceId: selectedDeviceId }, responseType: 'blob', timeout: 20000, signal: controller.signal });
           return res;
         };
@@ -2768,10 +2761,6 @@ function App() {
   }, [currentSamsatDevices, searchTerm]);
 
   useEffect(() => {
-    getAuthCredentials();
-  }, []);
-
-  useEffect(() => {
     if (!isAdmin) {
       setIsEditing(false);
       setIsRequestModalOpen(false);
@@ -2884,13 +2873,25 @@ function App() {
             {/* Tab Switcher */}
             <div className="grid grid-cols-2 bg-slate-100/80 border border-slate-200/60 rounded-2xl p-1 mb-7">
               <button
-                onClick={() => { setAuthTab('admin'); setAuthUsername(''); setAuthPassword(''); setAuthError(null); }}
+                onClick={() => {
+                  setAuthTab('admin'); setAuthUsername(''); setAuthPassword(''); setAuthError(null);
+                  setTurnstileToken(null);
+                  if (turnstileWidgetId.current && (window as any).turnstile) {
+                    (window as any).turnstile.reset(turnstileWidgetId.current);
+                  }
+                }}
                 className={`py-2.5 rounded-xl text-xs font-black transition-all ${authTab === 'admin' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-400 hover:text-slate-600'}`}
               >
                 Super Admin
               </button>
               <button
-                onClick={() => { setAuthTab('user'); setAuthUsername(''); setAuthPassword(''); setAuthError(null); }}
+                onClick={() => {
+                  setAuthTab('user'); setAuthUsername(''); setAuthPassword(''); setAuthError(null);
+                  setTurnstileToken(null);
+                  if (turnstileWidgetId.current && (window as any).turnstile) {
+                    (window as any).turnstile.reset(turnstileWidgetId.current);
+                  }
+                }}
                 className={`py-2.5 rounded-xl text-xs font-black transition-all ${authTab === 'user' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-400 hover:text-slate-600'}`}
               >
                 User
@@ -2926,13 +2927,30 @@ function App() {
                     </svg>
                   </div>
                   <input
-                    type="password"
+                    type={showPassword ? "text" : "password"}
                     value={authPassword}
                     onChange={(e) => setAuthPassword(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') handleLogin(authTab); }}
-                    className="w-full pl-12 pr-4 py-3.5 bg-white/50 border border-slate-200 rounded-2xl text-sm font-semibold text-slate-900 focus:border-teal-400 focus:ring-2 focus:ring-teal-400/20 outline-none transition-all placeholder:text-slate-400"
+                    className="w-full pl-12 pr-12 py-3.5 bg-white/50 border border-slate-200 rounded-2xl text-sm font-semibold text-slate-900 focus:border-teal-400 focus:ring-2 focus:ring-teal-400/20 outline-none transition-all placeholder:text-slate-400"
                     placeholder="Masukkan sandi rahasia"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-teal-600 transition-colors"
+                  >
+                    {showPassword ? (
+                      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                        <line x1="1" y1="1" x2="23" y2="23"></line>
+                      </svg>
+                    ) : (
+                      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                    )}
+                  </button>
                 </div>
               </div>
 
@@ -2942,6 +2960,32 @@ function App() {
                   {authError}
                 </div>
               )}
+
+              {/* Cloudflare Turnstile CAPTCHA */}
+              <div
+                ref={(el) => {
+                  if (!el) return;
+                  (turnstileRef as any).current = el;
+                  // Render Turnstile widget when container mounts
+                  const renderWidget = () => {
+                    if (!(window as any).turnstile || !el || el.childElementCount > 0) return;
+                    turnstileWidgetId.current = (window as any).turnstile.render(el, {
+                      sitekey: TURNSTILE_SITE_KEY,
+                      callback: (token: string) => setTurnstileToken(token),
+                      'expired-callback': () => setTurnstileToken(null),
+                      'error-callback': () => setTurnstileToken(null),
+                      theme: 'light',
+                      size: 'flexible'
+                    });
+                  };
+                  if ((window as any).turnstile) {
+                    renderWidget();
+                  } else {
+                    (window as any).onTurnstileLoad = renderWidget;
+                  }
+                }}
+                className="flex justify-center"
+              />
 
               <button
                 onClick={() => handleLogin(authTab)}
@@ -3381,6 +3425,7 @@ function App() {
 
                   const kabidBadge = getStatusBadge(requestDraft.kabid.status === 'approved' ? 'ok' : requestDraft.kabid.status === 'rejected' ? 'no' : 'pending');
                   const sekbanBadge = getStatusBadge(requestDraft.sekban.status === 'approved' ? 'ok' : requestDraft.sekban.status === 'rejected' ? 'no' : 'pending');
+                  const outcomeBadge = getStatusBadge(requestDraft.outcome === 'approved' ? 'ok' : requestDraft.outcome === 'rejected' ? 'no' : 'pending');
 
                   return (
                     <div className="space-y-4">
@@ -3598,6 +3643,220 @@ function App() {
                               className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-2 text-xs font-black text-slate-900 disabled:bg-slate-50 disabled:text-slate-400"
                               placeholder="Jumlah disetujui"
                             />
+                          </div>
+                        </div>
+
+                        <div className="border border-slate-100 rounded-3xl p-5 bg-slate-50/50">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Hasil Akhir Permintaan</p>
+                              <p className="text-xs font-black text-slate-900 mt-1">Tentukan hasil akhir proses</p>
+                            </div>
+                            <div className={`px-3 py-1.5 rounded-xl border text-[10px] font-black flex items-center gap-2 ${outcomeBadge.className}`}>
+                              {outcomeBadge.icon}
+                              {outcomeBadge.text}
+                            </div>
+                          </div>
+                          
+                          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <button 
+                              onClick={() => persistRequestDraft({ ...requestDraft, outcome: 'approved', rejectionReason: null })}
+                              className={`py-3 rounded-2xl text-xs font-black transition-all flex items-center justify-center gap-2 border ${
+                                requestDraft.outcome === 'approved' 
+                                  ? 'bg-emerald-600 text-white border-emerald-600 shadow-lg shadow-emerald-200' 
+                                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                              }`}
+                            >
+                              Permintaan Disetujui
+                            </button>
+                            <button 
+                              onClick={() => persistRequestDraft({ ...requestDraft, outcome: 'rejected', beritaAcara: null, fastDevicesArray: [] })}
+                              className={`py-3 rounded-2xl text-xs font-black transition-all flex items-center justify-center gap-2 border ${
+                                requestDraft.outcome === 'rejected' 
+                                  ? 'bg-rose-600 text-white border-rose-600 shadow-lg shadow-rose-200' 
+                                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                              }`}
+                            >
+                              <XCircle className="w-4 h-4" />
+                              Permintaan Ditolak
+                            </button>
+                          </div>
+
+                          {requestDraft.outcome === 'approved' && (
+                            <div className="mt-4 p-4 bg-white border border-slate-100 rounded-2xl">
+                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Daftar Perangkat yang Diserahkan</p>
+                              <p className="text-xs font-medium text-slate-500 mb-4">Silakan masukkan data alat untuk dicetak otomatis pada Berita Acara (BAST).</p>
+                              
+                              {(() => {
+                                const count = requestDraft.sekban?.approvedCount || requestDraft.kabid?.approvedCount || 0;
+                                const currentEntries = requestDraft.fastDevicesArray || [];
+                                // Auto-fill blanks
+                                if (currentEntries.length !== count) {
+                                  const updated = [...currentEntries];
+                                  while (updated.length < count) updated.push({ tempId: crypto.randomUUID(), name: '', serialNumber: '', budgetYear: '' });
+                                  if (updated.length > count) updated.length = count;
+                                  
+                                  // Avoid infinite re-renders by wrapping in useEffect or doing it locally on next cycle, but for now we'll construct it in-place
+                                }
+                                
+                                const entriesToRender = currentEntries.length === count ? currentEntries : Array(count).fill(0).map((_, i) => currentEntries[i] || { tempId: crypto.randomUUID(), name: '', serialNumber: '', budgetYear: '' });
+
+                                return (
+                                  <div className="flex flex-col gap-3">
+                                    {entriesToRender.map((entry, idx) => (
+                                      <div key={entry.tempId || idx} className="grid grid-cols-3 gap-2 bg-slate-50 p-3 rounded-xl border border-slate-100 items-center">
+                                        <input
+                                          type="text"
+                                          placeholder="Nama/Merk/Ukuran"
+                                          value={entry.name}
+                                          onChange={(e) => {
+                                            const newArr = [...entriesToRender];
+                                            newArr[idx] = { ...newArr[idx], name: e.target.value };
+                                            persistRequestDraft({ ...requestDraft, fastDevicesArray: newArr }, true);
+                                          }}
+                                          className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs font-bold w-full"
+                                        />
+                                        <input
+                                          type="text"
+                                          placeholder="Serial Number"
+                                          value={entry.serialNumber}
+                                          onChange={(e) => {
+                                            const newArr = [...entriesToRender];
+                                            newArr[idx] = { ...newArr[idx], serialNumber: e.target.value };
+                                            persistRequestDraft({ ...requestDraft, fastDevicesArray: newArr }, true);
+                                          }}
+                                          className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs font-bold w-full"
+                                        />
+                                        <input
+                                          type="text"
+                                          placeholder="Tahun Anggaran (opsional)"
+                                          value={entry.budgetYear}
+                                          onChange={(e) => {
+                                            const newArr = [...entriesToRender];
+                                            newArr[idx] = { ...newArr[idx], budgetYear: e.target.value };
+                                            persistRequestDraft({ ...requestDraft, fastDevicesArray: newArr }, true);
+                                          }}
+                                          className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs font-bold w-full"
+                                        />
+                                      </div>
+                                    ))}
+                                    {count === 0 && <p className="text-xs font-bold text-rose-500">Jumlah disetujui masih 0</p>}
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          )}
+
+                          {requestDraft.outcome === 'rejected' && (
+                            <div className="mt-4 p-4 bg-white border border-slate-100 rounded-2xl">
+                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Alasan Ditolak</p>
+                              <textarea 
+                                value={requestDraft.rejectionReason || ''}
+                                onChange={(e) => persistRequestDraft({ ...requestDraft, rejectionReason: e.target.value }, true)}
+                                placeholder="Tuliskan alasan penolakan permintaan di sini..."
+                                className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-rose-500/20 min-h-[80px]"
+                              />
+                            </div>
+                          )}
+
+                          <div className="mt-6 flex flex-col gap-3">
+                            {requestDraft.finalizedAt ? (
+                              <div className="mt-6 p-4 bg-emerald-50 border border-emerald-100 rounded-3xl flex flex-col gap-3">
+                                <div className="text-center">
+                                  <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-2" />
+                                  <p className="text-sm font-black text-emerald-800">PERMINTAAN SELESAI</p>
+                                  <p className="text-[10px] font-bold text-emerald-600 mt-1">Sistem telah mencatat dan mencetak BAST secara otomatis.</p>
+                                </div>
+                                {requestDraft.outcome === 'approved' && (
+                                  <div className="mt-4 pt-4 border-t border-emerald-200">
+                                    <p className="text-[10px] font-black text-emerald-700 uppercase tracking-widest text-center mb-3">Langkah Terakhir: Kirim BAST Fisik</p>
+                                    <label className="w-full bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl py-3 px-4 shadow-xl cursor-pointer transition-all flex items-center justify-center gap-2 font-black text-sm text-center">
+                                      <FileUp className="w-5 h-5" />
+                                      {requestDraft.beritaAcara ? 'Kirim Ulang BAST Ter-TTD' : 'Upload & Kirim BAST Ter-TTD'}
+                                      <input type="file" className="hidden" accept="application/pdf" onChange={handleBASTUpload} />
+                                    </label>
+                                    {requestDraft.beritaAcara && (
+                                      <div className="mt-3 flex items-center justify-center gap-2 bg-white rounded-xl p-2 border border-emerald-100">
+                                        <p className="text-[10px] font-black text-emerald-700 truncate max-w-[150px]">{requestDraft.beritaAcara.fileName}</p>
+                                        <button 
+                                          onClick={() => window.open(requestDraft.beritaAcara?.dataUrl || '', '_blank')}
+                                          className="text-[10px] font-black text-blue-600 hover:underline px-2"
+                                        >
+                                          Buka
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <button 
+                                onClick={async () => {
+                                  if (requestDraft.outcome === 'approved') {
+                                    const reqCount = requestDraft.sekban?.approvedCount || requestDraft.kabid?.approvedCount || 0;
+                                    const fastArr = requestDraft.fastDevicesArray || [];
+                                    if (fastArr.length < reqCount || fastArr.some(f => !f.name.trim() || !f.serialNumber.trim())) {
+                                      alert('Mohon lengkapi semua baris perangkat (Merk & Serial Number).');
+                                      return;
+                                    }
+
+                                    const now = new Date().toISOString();
+                                    
+                                    // Save devices
+                                    for (const dev of fastArr) {
+                                      const newId = `dev-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+                                      const devicePayload: Partial<Device> = {
+                                        id: newId,
+                                        name: dev.name,
+                                        serialNumber: dev.serialNumber,
+                                        budgetYear: dev.budgetYear || new Date().getFullYear().toString(),
+                                        category: 'Perangkat IT',
+                                        location: requestDraft.samsat,
+                                        subLocation: '',
+                                        condition: 'Baik',
+                                        phoneNumber: '-',
+                                        serviceUnit: requestDraft.samsat,
+                                        samsat: requestDraft.samsat
+                                      };
+                                      
+                                      try {
+                                        await axios.post('/api/admin/devices', { action: 'create', payload: devicePayload });
+                                      } catch (e) {
+                                        console.error("Failed to insert device", e);
+                                      }
+                                    }
+
+                                    // Check order number (history count)
+                                    const orderList = requestHistoryItems.filter(r => new Date(r.createdAt).getFullYear() === new Date().getFullYear());
+                                    const orderNumber = orderList.length || 1;
+
+                                    // Auto-generate BAST PDF
+                                    try {
+                                      const pdfResult = await generateBASTPdf(requestDraft, fastArr, orderNumber);
+                                      const a = document.createElement('a');
+                                      a.href = pdfResult.dataUrl;
+                                      a.download = pdfResult.file.name;
+                                      a.click();
+                                    } catch(e) {
+                                      console.error("PDF generation err", e);
+                                      alert("Gagal membuat PDF BAST otomatis.");
+                                    }
+
+                                    persistRequestDraft({ ...requestDraft, finalizedAt: now });
+                                  } else {
+                                    // Rejected branch
+                                    const now = new Date().toISOString();
+                                    persistRequestDraft({ ...requestDraft, finalizedAt: now });
+                                  }
+                                }}
+                                disabled={!requestDraft.outcome || (requestDraft.outcome === 'rejected' && !requestDraft.rejectionReason)}
+                                className="w-full py-4 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-200 disabled:cursor-not-allowed text-white rounded-3xl font-black text-sm shadow-xl shadow-slate-200 transition-all flex items-center justify-center gap-2"
+                              >
+                                <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                                Selesaikan Proses (Finish & Generate PDF)
+                              </button>
+                            )}
+                            {!requestDraft.finalizedAt && !requestDraft.outcome && <p className="text-center text-[10px] font-bold text-rose-500 uppercase tracking-widest">Pilih hasil akhir terlebih dahulu</p>}
                           </div>
                         </div>
                     </div>
@@ -4047,8 +4306,63 @@ function App() {
                           </div>
                         </div>
                         {requestStatusDraft.finalizedAt ? (
-                          <p className="mt-3 text-xs font-bold text-emerald-700">Selesai: {new Date(requestStatusDraft.finalizedAt).toLocaleString()}</p>
-                        ) : null}
+                          <div className="mt-4 p-5 rounded-[2rem] bg-slate-900 text-white shadow-xl shadow-slate-200 overflow-hidden relative group">
+                            <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:scale-110 transition-transform">
+                              <CheckCircle2 className="w-16 h-16" />
+                            </div>
+                            <div className="relative z-10">
+                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Status Akhir Permintaan</p>
+                              <h4 className={`text-xl font-black mb-3 ${requestStatusDraft.outcome === 'approved' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                Permintaan {requestStatusDraft.outcome === 'approved' ? 'Disetujui' : 'Ditolak'}
+                              </h4>
+                              
+                              {requestStatusDraft.outcome === 'approved' && requestStatusDraft.beritaAcara && (
+                                <div className="space-y-4">
+                                  <div className="p-3 bg-white/5 border border-white/10 rounded-2xl flex items-center justify-between gap-4">
+                                    <div className="flex items-center gap-3">
+                                      <div className="bg-emerald-500/20 p-2 rounded-xl">
+                                        <FileUp className="w-5 h-5 text-emerald-400" />
+                                      </div>
+                                      <div>
+                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Berita Acara (BAST)</p>
+                                        <p className="text-xs font-bold text-white truncate max-w-[150px]">{requestStatusDraft.beritaAcara.fileName}</p>
+                                      </div>
+                                    </div>
+                                    <button 
+                                      onClick={() => window.open(requestStatusDraft.beritaAcara?.dataUrl || '', '_blank')}
+                                      className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-[10px] font-black uppercase tracking-widest rounded-xl transition-colors"
+                                    >
+                                      Download
+                                    </button>
+                                  </div>
+                                  <p className="text-[10px] font-medium text-slate-400 italic">* Silakan unduh dan cetak Berita Acara sebagai bukti serah terima.</p>
+                                </div>
+                              )}
+
+                              {requestStatusDraft.outcome === 'rejected' && (
+                                <div className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl">
+                                  <p className="text-[10px] font-bold text-rose-300 uppercase tracking-widest mb-1">Alasan Penolakan:</p>
+                                  <p className="text-sm font-bold text-white italic">"{requestStatusDraft.rejectionReason || 'Tidak ada alasan spesifik'}"</p>
+                                </div>
+                              )}
+
+                              <div className="mt-4 pt-4 border-t border-white/10 flex items-center justify-between">
+                                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Selesai Pada</span>
+                                <span className="text-xs font-black text-slate-400">{new Date(requestStatusDraft.finalizedAt).toLocaleString('id-ID', { dateStyle: 'long', timeStyle: 'short' })}</span>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="mt-4 p-5 rounded-[2rem] bg-amber-50 border border-amber-100 flex items-center gap-4">
+                            <div className="bg-amber-100 p-3 rounded-[1.25rem]">
+                              <Hourglass className="w-6 h-6 text-amber-600 animate-pulse" />
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-black text-amber-700 uppercase tracking-widest mb-0.5">Proses Berjalan</p>
+                              <p className="text-xs font-bold text-amber-800">Menunggu keputusan final dari Admin.</p>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   );

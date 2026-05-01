@@ -35,6 +35,7 @@ interface SidebarProps {
 export function Sidebar({
   isAdmin,
   accountAccess,
+  session,
   logout,
   activeSamsat,
   setActiveSamsat,
@@ -72,7 +73,7 @@ export function Sidebar({
         </div>
         <div className="flex items-center gap-3">
           <div className={`px-3 py-1.5 rounded-xl text-[10px] font-black border ${isAdmin ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-slate-50 text-slate-700 border-slate-200'}`}>
-            {isAdmin ? 'SUPER ADMIN' : 'USER'}
+            {(session?.role || 'user').replace('_', ' ').toUpperCase()}
           </div>
           <button
             onClick={logout}

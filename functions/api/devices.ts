@@ -293,7 +293,7 @@ export async function onRequestGet({ request, env }: { request: Request; env: En
   const limit = Math.max(1, Math.min(500, Number(url.searchParams.get('limit') || 200)))
   const offset = Math.max(0, Number(url.searchParams.get('offset') || 0))
 
-  const where: string[] = ['d.deleted_at IS NULL']
+  const where: string[] = []
   const args: unknown[] = []
 
   if (samsat) {
@@ -348,19 +348,9 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
 
   if (action === 'delete') {
     const idRaw = String(data.id || '')
-    const candidates = Array.from(new Set([idRaw, idRaw.trim()])).filter(v => v)
-    if (candidates.length === 0) return json({ error: 'id wajib diisi' }, { status: 400 })
-    let id: string | null = null
-    for (const c of candidates) {
-      const found = await env.DB.prepare('SELECT id FROM devices WHERE id = ? AND deleted_at IS NULL').bind(c).first<Record<string, unknown>>()
-      if (found?.id) {
-        id = String(found.id)
-        break
-      }
-    }
-    if (!id) return json({ error: 'perangkat tidak ditemukan' }, { status: 404 })
-    const now = nowIso()
-    await env.DB.prepare('UPDATE devices SET deleted_at = ?, updated_at = ? WHERE id = ?').bind(now, now, id).run()
+    const id = String(data.id || '').trim()
+    if (!id) return json({ error: 'id wajib diisi' }, { status: 400 })
+    await env.DB.prepare('DELETE FROM devices WHERE id = ?').bind(id).run()
     return json({ ok: true }, { status: 200 })
   }
 

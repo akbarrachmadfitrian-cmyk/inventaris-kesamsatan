@@ -157,7 +157,7 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
     action = String(form.get('action') || 'upload')
     deviceId = String(form.get('deviceId') || '')
     const f = form.get('file')
-    file = f instanceof File ? f : null
+    file = (f && typeof f === 'object') ? f as File : null
   } else {
     let body: unknown
     try {
