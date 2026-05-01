@@ -28,6 +28,7 @@ import {
 } from './types';
 import { generateBASTPdf } from './utils/generateBASTPdf';
 import { useAutoUpdate } from './hooks/useAutoUpdate';
+import { useAutoLogout } from './hooks/useAutoLogout';
 
 
 export const LS_DELETED_DEVICE_IDS = 'samsat_deleted_device_ids';
@@ -852,6 +853,29 @@ function App() {
     setRequestDraft(null);
     setIsManageLoginOpen(false);
   };
+
+  const silentLogout = useCallback(() => {
+    setSession(null);
+    clearAuthSession();
+    delete axios.defaults.headers.common['x-admin-key'];
+    delete axios.defaults.headers.common['x-user-key'];
+    setAuthTab('admin');
+    setAuthUsername('');
+    setAuthPassword('');
+    setAuthError(null);
+    setSelectedDevice(null);
+    setIsEditing(false);
+    setSearchTerm('');
+    setViewMode('selection');
+    setActiveSamsat(null);
+    setShowSamsatDropdown(false);
+    setIsRequestModalOpen(false);
+    setRequestDraft(null);
+    setIsManageLoginOpen(false);
+    alert('Sesi Anda telah berakhir karena tidak ada aktivitas selama 30 menit. Silakan login kembali.');
+  }, []);
+
+  useAutoLogout(!!session, silentLogout);
 
   const sortInboxByCreatedAtDesc = (items: InboxMessage[]) => {
     return [...items].sort((a, b) => {
