@@ -7,6 +7,25 @@ export const onRequest: PagesFunction = async (context) => {
   // Clone response to modify headers
   const newResponse = new Response(response.body, response);
 
+  // ─── Restrict CORS: override Cloudflare's default "Access-Control-Allow-Origin: *" ───
+  // Only allow requests from our own domain and Cloudflare Pages preview deployments.
+  // Same-origin requests (app → /api) are unaffected by CORS, so this is safe.
+  const origin = context.request.headers.get('Origin') || '';
+  const ALLOWED_ORIGINS = [
+    'https://inventaris-kesamsatan.pages.dev',
+  ];
+  const isAllowed =
+    ALLOWED_ORIGINS.includes(origin) ||
+    /^https:\/\/[a-z0-9]+\.inventaris-kesamsatan\.pages\.dev$/.test(origin);
+
+  if (isAllowed) {
+    newResponse.headers.set('Access-Control-Allow-Origin', origin);
+    newResponse.headers.set('Vary', 'Origin');
+  } else {
+    // Remove the wildcard header that Cloudflare Pages sets by default
+    newResponse.headers.delete('Access-Control-Allow-Origin');
+  }
+
   // ─── Content Security Policy ───
   // Configured to whitelist all resources used by the app:
   // - Turnstile CAPTCHA (challenges.cloudflare.com)
