@@ -27,6 +27,8 @@ import {
   AuthRole, AuthCredentials, AuthSession, AdminAccessScope, AccountAccess, FastDeviceEntry
 } from './types';
 import { generateBASTPdf } from './utils/generateBASTPdf';
+import { exportPerSamsatPdf, exportPerSamsatExcel, exportAllSamsatPdf, exportAllSamsatExcel } from './utils/exportReport';
+import { ExportDropdown } from './components/ExportDropdown';
 import { useAutoUpdate } from './hooks/useAutoUpdate';
 import { useAutoLogout } from './hooks/useAutoLogout';
 
@@ -685,6 +687,8 @@ function App() {
 
   const isAdmin = !!session && ['superadmin', 'admin_infra', 'admin_regional', 'admin'].includes(session.role);
   const accountAccess = useMemo(() => getAccountAccess(session), [session]);
+  const canExport = !!session && ['superadmin', 'admin_infra', 'admin_regional'].includes(session.role);
+  const canExportAll = !!session && ['superadmin', 'admin_infra'].includes(session.role);
   const strictSheetSync = false;
 
   const [showPhoto, setShowPhoto] = useState(false);
@@ -3152,6 +3156,17 @@ function App() {
             renderScanQR()
           ) : viewMode === 'dashboard' ? (
             <>
+              {canExport && activeSamsat && (
+                <div className="flex justify-end mb-2">
+                  <ExportDropdown
+                    onExportPdf={() => exportPerSamsatPdf(currentSamsatDevices, activeSamsat, stats)}
+                    onExportExcel={() => exportPerSamsatExcel(currentSamsatDevices, activeSamsat, stats)}
+                    onExportAllPdf={canExportAll ? () => exportAllSamsatPdf(devices, visibleSamsatList) : undefined}
+                    onExportAllExcel={canExportAll ? () => exportAllSamsatExcel(devices, visibleSamsatList) : undefined}
+                    showAllSamsatOptions={canExportAll}
+                  />
+                </div>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
                 {[
                   { label: 'Total Perangkat', value: stats.total, icon: <Monitor className="w-6 h-6" />, color: 'text-blue-600', bg: 'bg-blue-50', onClick: () => { setDashboardDevicesModalTitle('Daftar Total Perangkat'); setDashboardDevicesModalFilter('all'); setIsDashboardDevicesModalOpen(true); } },
@@ -3291,6 +3306,15 @@ function App() {
                       Tambah Perangkat
                     </button>
                   ) : null
+                )}
+                {canExport && activeSamsat && (
+                  <ExportDropdown
+                    onExportPdf={() => exportPerSamsatPdf(currentSamsatDevices, activeSamsat, stats)}
+                    onExportExcel={() => exportPerSamsatExcel(currentSamsatDevices, activeSamsat, stats)}
+                    onExportAllPdf={canExportAll ? () => exportAllSamsatPdf(devices, visibleSamsatList) : undefined}
+                    onExportAllExcel={canExportAll ? () => exportAllSamsatExcel(devices, visibleSamsatList) : undefined}
+                    showAllSamsatOptions={canExportAll}
+                  />
                 )}
                 <button onClick={fetchData} className="p-3 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 transition-colors">
                   <RefreshCw className={`w-5 h-5 text-slate-600 ${loading ? 'animate-spin' : ''}`} />
